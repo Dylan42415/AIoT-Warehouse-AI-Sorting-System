@@ -125,7 +125,7 @@ This project fulfills and exceeds 100% of the **Level 4 Maximum Marks Criteria**
 │   ├── graph.html                    # Interactive browser knowledge graph
 │   ├── GRAPH_REPORT.md               # God nodes, communities, and cohesion report
 │   └── graph.json                    # GraphRAG semantic topology
-├── Knowledge  Base/                  # 50+ course laboratory protocols and markdown wiki
+├── Knowledge_Base/                   # 50+ course laboratory protocols and markdown wiki
 ├── AGENTS.md                         # Subagent review guidelines & Graphify enforcement
 └── GEMINI.md                         # Project instructions & ground-truth configuration
 ```

@@ -101,7 +101,7 @@ void setup() {
   Serial.println("==================================================");
   Serial.println("  WAREHOUSE AI CONVEYOR SORTING SYSTEM READY!    ");
   Serial.println("  Level 4 Architecture Initialized.               ");
-  Serial.println("  Press Push Button (D2) to Start Conveyor Belt.  ");
+  Serial.println("  Press Push Button (D11) to Start Conveyor Belt. ");
   Serial.println("==================================================");
 }
 

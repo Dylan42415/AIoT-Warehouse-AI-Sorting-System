@@ -111,8 +111,8 @@ void resizeImage(int srcWidth, int srcHeight, uint8_t *srcImage, int dstWidth, i
 void cropImage(int srcWidth, int srcHeight, uint8_t *srcImage, int startX, int startY, int dstWidth, int dstHeight, uint8_t *dstImage, int iBpp);
 
 /**
-
-
+ * @brief Determine resize dimensions
+ */
 int calculate_resize_dimensions(uint32_t out_width, uint32_t out_height, uint32_t *resize_col_sz, uint32_t *resize_row_sz, bool *do_resize)
 {
     size_t list_size = 2;

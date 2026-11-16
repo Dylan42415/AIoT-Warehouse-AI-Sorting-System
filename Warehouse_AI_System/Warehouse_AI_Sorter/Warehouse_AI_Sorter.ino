@@ -28,11 +28,12 @@
 // - J1: A6 (TX), A7 (RX) -> Hardware UART to Raspberry Pi
 // - J2: Pin D11          -> Grove Button (or breadboard push button)
 // - J3: Pin D12          -> Sorting Servo Motor (Signal pin)
-// - J8: Camera Socket    -> Uses D0, D2, D3, D4, D5, D6, D8, D9 (DO NOT use D2/D4 if camera is mounted)
-#define BUTTON_PIN          11    // Push Button on Grove port J2 (D11) - avoids D2 camera bus collision
-#define BUTTON_ACTIVE_LOW   1     // 1 = Active-LOW (INPUT_PULLUP, press=LOW); 0 = Active-HIGH (Grove button module)
+// - Onboard Shield Button: Pin D13 (built-in tactile button on TinyML Carrier)
+#define BUTTON_PIN          11          // Push Button on Grove port J2 (D11)
+#define BUTTON_INBUILT      13          // Built-in on-shield push button (Lab 13 standard)
+#define BUTTON_ACTIVE_LOW   1           // 1 = Active-LOW (INPUT_PULLUP, press=LOW)
 #define LED_CONVEYOR        LED_BUILTIN // Conveyor Active LED Indicator (D13)
-#define SERVO_PIN           12    // Sorting Servo Motor Signal Pin (Grove port J3: D12)
+#define SERVO_PIN           12          // Sorting Servo Motor Signal Pin (Grove port J3: D12)
 
 // Define UART object for communication with Raspberry Pi via J1 (A6 = TX, A7 = RX)
 UART mySerial(A6, A7, NC, NC);
@@ -73,12 +74,15 @@ void setup() {
   mySerial.begin(9600);
 
   // Initialize Sensors & Actuators
-  if (BUTTON_ACTIVE_LOW) {
-    pinMode(BUTTON_PIN, INPUT_PULLUP);
-  } else {
-    pinMode(BUTTON_PIN, INPUT);
-  }
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_INBUILT, INPUT_PULLUP);
   pinMode(LED_CONVEYOR, OUTPUT);
+  pinMode(LEDR, OUTPUT);
+  pinMode(LEDG, OUTPUT);
+  pinMode(LEDB, OUTPUT);
+  digitalWrite(LEDR, HIGH); // RGB LEDs are active-low on Nano 33 BLE (HIGH = OFF)
+  digitalWrite(LEDG, HIGH);
+  digitalWrite(LEDB, HIGH);
   digitalWrite(LED_CONVEYOR, LOW); // Conveyor stopped initially
 
   // Initialize Servo motor to starting position (0 degrees)
@@ -115,18 +119,27 @@ void loop() {
     // STATE 0: IDLE (Waiting for operator to press Start Button)
     // --------------------------------------------------------------------------
     case STATE_IDLE: {
-      // Evaluate button press state without tautology bug
-      bool buttonPressed = (BUTTON_ACTIVE_LOW) ? (digitalRead(BUTTON_PIN) == LOW) : (digitalRead(BUTTON_PIN) == HIGH);
+      // Check both Grove Button (D11) and Built-in Shield Button (D13)
+      bool buttonPressed = (digitalRead(BUTTON_PIN) == LOW) || 
+                           (digitalRead(BUTTON_INBUILT) == LOW);
+
+      // Also allow pressing 's' or Enter in Arduino Serial Monitor to start
+      if (Serial.available()) {
+        char c = Serial.read();
+        if (c == 's' || c == ' ' || c == '\n' || c == '\r') {
+          buttonPressed = true;
+        }
+      }
+
       if (buttonPressed) {
         // Debounce confirmation
         delay(50);
-        buttonPressed = (BUTTON_ACTIVE_LOW) ? (digitalRead(BUTTON_PIN) == LOW) : (digitalRead(BUTTON_PIN) == HIGH);
-        if (buttonPressed) {
-          Serial.println("\n[START] Push Button Triggered! Starting Conveyor Belt...");
-          digitalWrite(LED_CONVEYOR, HIGH); // LED turns ON (Conveyor moving)
-          currentState = STATE_CONVEYOR_RUNNING;
-          delay(500); // Prevent multi-triggering
-        }
+        Serial.println("\n[START] Button Triggered! Starting Simulated Conveyor Belt...");
+        digitalWrite(LED_CONVEYOR, HIGH); // LED turns ON (Conveyor moving)
+        digitalWrite(LEDG, LOW);          // Green LED ON (Nano 33 BLE active-low)
+        digitalWrite(LEDR, HIGH);         // Red LED OFF
+        currentState = STATE_CONVEYOR_RUNNING;
+        delay(400); // Prevent multi-triggering
       }
       break;
     }
@@ -145,8 +158,10 @@ void loop() {
           Serial.print("[ZONE] Product Arrived! Proximity Value: ");
           Serial.println(proximity);
           
-          // Stop conveyor belt (LED turns OFF)
+          // Stop conveyor belt (LED turns OFF, Red inspection LED turns ON)
           digitalWrite(LED_CONVEYOR, LOW);
+          digitalWrite(LEDG, HIGH); // Green OFF
+          digitalWrite(LEDR, LOW);  // Red ON
           Serial.println("[STOP] Conveyor Belt Stopped for AI Scanning.");
           
           currentState = STATE_OBJECT_DETECTED;
@@ -233,6 +248,10 @@ void loop() {
       Serial.print("[UART] Transmitted Confidence Score to Raspberry Pi: ");
       Serial.println(confidenceScore);
       Serial.println("[STATUS] Cycle Complete. Resetting for next product.\n");
+      
+      digitalWrite(LEDR, HIGH);         // Red LED OFF
+      digitalWrite(LEDG, HIGH);         // Green LED OFF
+      digitalWrite(LED_CONVEYOR, LOW);
       
       delay(1000);
       currentState = STATE_IDLE; // Reset to wait for next button / conveyor run

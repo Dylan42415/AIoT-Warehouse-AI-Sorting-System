@@ -154,6 +154,43 @@ This project fulfills and exceeds 100% of the **Level 4 Maximum Marks Criteria**
 
 ---
 
+## 🕸️ Graphify Knowledge Graph & Agent Navigation
+
+This repository is codified with an interactive **Graphify Knowledge Graph** mapping all FSM state transitions, pinouts, and hardware-software contracts.
+
+* **View Visual Graph:** Open [`graphify-out/graph.html`](graphify-out/graph.html) directly in any browser for interactive visual inspection.
+* **Explore Architecture Communities:** Read [`graphify-out/GRAPH_REPORT.md`](graphify-out/GRAPH_REPORT.md) for community hubs and cohesion scores.
+* **Query the Codebase via Terminal:**
+  ```bash
+  # Broad context query (BFS traversal)
+  python -m graphify query "What are the states of the warehouse sorting system?"
+
+  # Deep path tracing (DFS traversal)
+  python -m graphify query "How does the servo actuate when mouse is detected?" --dfs
+  ```
+
+---
+
+## 🤖 Instructions for AI Agents & Users Cloning This Project
+
+If you (or your AI assistant in **Cursor, Claude Code, Antigravity, Copilot, or Devin**) have cloned this repository, complete setup instructions are documented in:
+👉 **[`AGENTS.md`](AGENTS.md)**
+
+### How to Retrain or Deploy to a New Edge Impulse Project in 3 Minutes:
+1. Create a project at [studio.edgeimpulse.com](https://studio.edgeimpulse.com/) and copy your API Key from **Dashboard ➔ Keys**.
+2. Run our turnkey uploader to automatically upload the 154-image dataset with labels and an 80/20 train/test split:
+   ```bash
+   python Warehouse_AI_System/upload_to_edge_impulse.py YOUR_EDGE_IMPULSE_API_KEY
+   ```
+3. In Edge Impulse:
+   * **Impulse Design:** Image Data ($96 \times 96$ Squash) ➔ Image DSP (Grayscale) ➔ Transfer Learning (MobileNetV1 0.25 int8).
+   * **Feature Generation:** Click *Generate features*.
+   * **Training:** Train for 20–30 cycles (guarantees $\ge 70\%$ Level 4 accuracy).
+   * **Deployment:** Select *Arduino library* (int8 quantized) ➔ Click *Build* ➔ Replace `Warehouse_AI_System/edge_impulse_firmware_library.zip`.
+4. Flash [`Warehouse_AI_System/Warehouse_AI_Sorter/Warehouse_AI_Sorter.ino`](Warehouse_AI_System/Warehouse_AI_Sorter/Warehouse_AI_Sorter.ino) via Arduino IDE!
+
+---
+
 ## 👤 Author & Academic Details
 * **Student:** Dylan (Index: 22)
 * **Institution:** ITE College East, Singapore

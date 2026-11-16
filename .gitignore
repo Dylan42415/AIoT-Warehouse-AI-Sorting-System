@@ -1,0 +1,31 @@
+# Installers & Large binaries
+01_Software Installation/
+*.exe
+*.msi
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+venv/
+.venv/
+
+# Scratch & Scraping Caches
+scratch/
+scraped_images/
+
+# OS specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Graphify Internal Sidecars
+graphify-out/.graphify_detect.json
+graphify-out/.graphify_python
+graphify-out/.graphify_root
+graphify-out/cache/
+Warehouse_AI_System/graphify-out/.graphify_detect.json
+Warehouse_AI_System/graphify-out/.graphify_python
+Warehouse_AI_System/graphify-out/.graphify_root
+Warehouse_AI_System/graphify-out/cache/

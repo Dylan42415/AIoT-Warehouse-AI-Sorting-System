@@ -257,24 +257,21 @@ void loop() {
       // 2. Graceful Fallback if Camera Unplugged or Offline
       if (!inferenceSuccess) {
         Serial.println("[INFO] Running in dynamic simulation mode.");
-        Serial.println("[PROMPT] Type 'm' (Mouse 96%), 'c' (Charger 94%), or 'b' (Background 98%) in Serial Monitor:");
+        Serial.println("[PROMPT] Type 'm' (Mouse 96%) or 'b' (Background 98%) in Serial Monitor:");
 
         unsigned long waitStart = millis();
         char choice = 0;
         while (millis() - waitStart < 2500) {
           if (Serial.available()) {
             char inChar = Serial.read();
-            if (inChar == 'm' || inChar == 'c' || inChar == 'b') {
+            if (inChar == 'm' || inChar == 'b') {
               choice = inChar;
               break;
             }
           }
         }
 
-        if (choice == 'c') {
-          detectedProduct = "charger";
-          confidenceScore = 94;
-        } else if (choice == 'b') {
+        if (choice == 'b') {
           detectedProduct = "background";
           confidenceScore = 98;
         } else {
@@ -306,10 +303,8 @@ void loop() {
       // Rubric Requirement Part 4 / Step 6:
       // "When specified product is identified, servo motor turns to 180 degrees 
       //  and remains in this state for at least 5 seconds before returning to 0 degrees."
-      if ((detectedProduct == "mouse" || detectedProduct == "charger") && confidenceScore >= 70) {
-        Serial.print(">>> TARGET PRODUCT IDENTIFIED (");
-        Serial.print(detectedProduct.toUpperCase());
-        Serial.println(")! <<<");
+      if (detectedProduct == "mouse" && confidenceScore >= 70) {
+        Serial.println(">>> TARGET PRODUCT IDENTIFIED (MOUSE)! <<<");
         Serial.println("[SERVO] Actuating Sorting Arm to 180 DEGREES...");
         myServo.write(180);
         

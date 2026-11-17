@@ -157,7 +157,7 @@ void loop() {
       if (APDS.proximityAvailable()) {
         int proximity = APDS.readProximity();
         
-        // Strict threshold check with consecutive sample confirmation
+        // Strict threshold check (< 40) with consecutive sample confirmation
         if (proximity >= 0 && proximity < PROXIMITY_THRESHOLD) {
           closeDetectionCount++;
           if (closeDetectionCount >= 2) { // Requires 2 consecutive readings (~200ms)
@@ -197,14 +197,18 @@ void loop() {
       Serial.println("\n[TINYML] Executing Edge Impulse Neural Network Inference (Grayscale)...");
       bool inferenceSuccess = false;
 
-      // 1. Attempt Live OV7675 Grayscale Camera Inference
+      // 1. Attempt Live OV7675 Camera Inference
       if (cameraAvailable || ei_camera_init()) {
         cameraAvailable = true;
 
-        // Allocate snapshot buffer for 96x96 Grayscale (9,216 bytes: 1 byte per pixel)
+        uint32_t resize_col_sz;
+        uint32_t resize_row_sz;
+        bool do_resize = false;
+        calculate_resize_dimensions(EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT, &resize_col_sz, &resize_row_sz, &do_resize);
+
         void *snapshot_mem = NULL;
         uint8_t *snapshot_buf = NULL;
-        snapshot_mem = ei_malloc(EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT);
+        snapshot_mem = ei_malloc(resize_col_sz * resize_row_sz * 2);
 
         if (snapshot_mem != NULL) {
           snapshot_buf = (uint8_t *)DWORD_ALIGN_PTR((uintptr_t)snapshot_mem);
@@ -301,9 +305,6 @@ void loop() {
     // STATE 4: SORTING ACTION (Selective Servo Motor Control)
     // --------------------------------------------------------------------------
     case STATE_SORTING_ACTION: {
-      // Rubric Requirement Part 4 / Step 6:
-      // "When specified product is identified, servo motor turns to 180 degrees 
-      //  and remains in this state for at least 5 seconds before returning to 0 degrees."
       if (detectedProduct == "mouse" && confidenceScore >= 70) {
         Serial.println(">>> TARGET PRODUCT IDENTIFIED (MOUSE)! <<<");
         Serial.println("[SERVO] Actuating Sorting Arm to 180 DEGREES...");
@@ -316,7 +317,6 @@ void loop() {
         myServo.write(0);
         sortedActionTaken = true;
       } else {
-        // Non-target product or background (empty desk, hand, chair, water bottle)
         Serial.print("[IGNORE] Non-target or Background detected: '");
         Serial.print(detectedProduct);
         Serial.print("' (Confidence: ");
@@ -335,7 +335,6 @@ void loop() {
     // STATE 5: CLOUD TRANSMISSION (UART to Raspberry Pi -> MQTT ThingSpeak)
     // --------------------------------------------------------------------------
     case STATE_TRANSMIT_CLOUD: {
-      // Send telemetry packet over Hardware UART to Raspberry Pi
       mySerial.println(confidenceScore);
       
       Serial.print("[UART] Transmitted Confidence Score to Raspberry Pi: ");

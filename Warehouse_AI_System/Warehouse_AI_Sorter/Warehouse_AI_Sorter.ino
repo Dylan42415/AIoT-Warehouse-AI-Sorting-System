@@ -8,7 +8,7 @@
  
   Hardware Pinout Configuration (Tiny Machine Learning Carrier):
   ----------------------------------------------------------------------------
-  1. Push Button (Input Sensor 1)    -> Onboard Carrier Button: Pin D13 (or Grove J2: Pin D11)
+  1. Push Button (Input Sensor 1)    -> Grove J2: Pin D11 (or Type 's' in Serial Monitor)
   2. Proximity Sensor (Input Sensor 2)-> Onboard APDS-9960 (I2C: Wire1)
   3. Conveyor LED (Output Actuator 1) -> Onboard RGB LEDs (Green = Moving, Red = Stop/Scan)
   4. Servo Motor (Output Actuator 2) -> Grove J3: Pin D12 (Sorts item: 180 deg for 5s)
@@ -58,7 +58,8 @@ bool sortedActionTaken = false;
 bool cameraAvailable = false;
 
 // Proximity threshold (APDS-9960: 0 = closest, 255 = far)
-const int PROXIMITY_THRESHOLD = 150; 
+// Strict threshold of 40 prevents false triggers from ambient overhead/ceiling IR lighting
+const int PROXIMITY_THRESHOLD = 40; 
 
 // ==============================================================================
 // 3. SETUP FUNCTION
@@ -109,7 +110,7 @@ void setup() {
   Serial.println("==================================================");
   Serial.println("  WAREHOUSE AI CONVEYOR SORTING SYSTEM READY!    ");
   Serial.println("  Level 4 Architecture Initialized (Grayscale).  ");
-  Serial.println("  Press Onboard Carrier Button to Start Belt.    ");
+  Serial.println("  Press Grove Button (D11) or type 's' to start! ");
   Serial.println("==================================================");
 }
 
@@ -150,22 +151,29 @@ void loop() {
     // STATE 1: CONVEYOR RUNNING (Monitoring Proximity Sensor)
     // --------------------------------------------------------------------------
     case STATE_CONVEYOR_RUNNING: {
+      static int closeDetectionCount = 0;
+      
       // Check for approaching product via Proximity Sensor
       if (APDS.proximityAvailable()) {
         int proximity = APDS.readProximity();
         
-        // When product is within the scanning zone (close proximity)
-        // Guard: proximity must be >= 0 (returns -1 on I2C error) and < threshold (0=close, 255=far)
+        // Strict threshold check with consecutive sample confirmation
         if (proximity >= 0 && proximity < PROXIMITY_THRESHOLD) {
-          Serial.print("[ZONE] Product Arrived! Proximity Value: ");
-          Serial.println(proximity);
-          
-          // Stop conveyor belt (Green OFF, Red inspection LED turns ON)
-          digitalWrite(LEDG, HIGH); // Green OFF (Conveyor stopped)
-          digitalWrite(LEDR, LOW);  // Red ON (Inspection zone active)
-          Serial.println("[STOP] Conveyor Belt Stopped for AI Scanning.");
-          
-          currentState = STATE_OBJECT_DETECTED;
+          closeDetectionCount++;
+          if (closeDetectionCount >= 2) { // Requires 2 consecutive readings (~200ms)
+            closeDetectionCount = 0;
+            Serial.print("[ZONE] Product Confirmed! Proximity Value: ");
+            Serial.println(proximity);
+            
+            // Stop conveyor belt (Green OFF, Red inspection LED turns ON)
+            digitalWrite(LEDG, HIGH); // Green OFF (Conveyor stopped)
+            digitalWrite(LEDR, LOW);  // Red ON (Inspection zone active)
+            Serial.println("[STOP] Conveyor Belt Stopped for AI Scanning.");
+            
+            currentState = STATE_OBJECT_DETECTED;
+          }
+        } else {
+          closeDetectionCount = 0;
         }
       }
       delay(100);

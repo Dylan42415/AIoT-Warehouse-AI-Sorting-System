@@ -28,8 +28,7 @@
 // ==============================================================================
 // 1. PIN & HARDWARE DEFINITIONS
 // ==============================================================================
-#define BUTTON_CARRIER      13          // Built-in push button on TinyML Carrier (Black button next to VIN)
-#define BUTTON_GROVE        11          // Optional external button on Grove port J2 (D11)
+#define BUTTON_PIN          11          // Push Button on Grove port J2 (D11)
 #define SERVO_PIN           12          // Sorting Servo Motor Signal Pin (Grove port J3: D12)
 
 // Define UART object for communication with Raspberry Pi via J1 (A6 = TX, A7 = RX)
@@ -72,8 +71,7 @@ void setup() {
   mySerial.begin(9600);
 
   // Initialize Sensors & Actuators
-  pinMode(BUTTON_CARRIER, INPUT_PULLUP); // Pin 13: Carrier onboard push button
-  pinMode(BUTTON_GROVE, INPUT_PULLUP);   // Pin 11: Grove J2 push button
+  pinMode(BUTTON_PIN, INPUT_PULLUP);     // Pin 11: Push button on Grove port J2
   pinMode(LEDR, OUTPUT);
   pinMode(LEDG, OUTPUT);
   pinMode(LEDB, OUTPUT);
@@ -125,9 +123,8 @@ void loop() {
     // STATE 0: IDLE (Waiting for operator to press Start Button)
     // --------------------------------------------------------------------------
     case STATE_IDLE: {
-      // Check both Carrier Onboard Button (Pin 13) and Grove Port J2 Button (Pin 11)
-      bool buttonPressed = (digitalRead(BUTTON_CARRIER) == LOW) || 
-                           (digitalRead(BUTTON_GROVE) == LOW);
+      // Check Grove Port J2 Button (Pin 11)
+      bool buttonPressed = (digitalRead(BUTTON_PIN) == LOW);
 
       // Also allow pressing 's' or Enter in Arduino Serial Monitor to start
       if (Serial.available()) {

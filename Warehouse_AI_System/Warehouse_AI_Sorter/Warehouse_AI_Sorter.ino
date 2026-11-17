@@ -8,9 +8,9 @@
  
   Hardware Pinout Configuration (Tiny Machine Learning Carrier):
   ----------------------------------------------------------------------------
-  1. Push Button (Input Sensor 1)    -> Grove J2: Pin D11 (or Onboard Shield D13)
+  1. Push Button (Input Sensor 1)    -> Onboard Carrier Button: Pin D13 (or Grove J2: Pin D11)
   2. Proximity Sensor (Input Sensor 2)-> Onboard APDS-9960 (I2C: Wire1)
-  3. LED Indicator (Output Actuator 1)-> LED_BUILTIN (Pin D13) & RGB Status LEDs
+  3. Conveyor LED (Output Actuator 1) -> Onboard RGB LEDs (Green = Moving, Red = Stop/Scan)
   4. Servo Motor (Output Actuator 2) -> Grove J3: Pin D12 (Sorts item: 180 deg for 5s)
   5. Hardware UART Serial Gateway    -> Grove J1: A6 (TX) / A7 (RX) to Raspberry Pi
   6. Edge Impulse TinyML Vision      -> OV7675 Camera (Native 96x96 Grayscale)
@@ -28,10 +28,8 @@
 // ==============================================================================
 // 1. PIN & HARDWARE DEFINITIONS
 // ==============================================================================
-#define BUTTON_PIN          11          // Push Button on Grove port J2 (D11)
-#define BUTTON_INBUILT      13          // Built-in on-shield push button (Lab 13 standard)
-#define BUTTON_ACTIVE_LOW   1           // 1 = Active-LOW (INPUT_PULLUP, press=LOW)
-#define LED_CONVEYOR        LED_BUILTIN // Conveyor Active LED Indicator (D13)
+#define BUTTON_CARRIER      13          // Built-in push button on TinyML Carrier (Black button next to VIN)
+#define BUTTON_GROVE        11          // Optional external button on Grove port J2 (D11)
 #define SERVO_PIN           12          // Sorting Servo Motor Signal Pin (Grove port J3: D12)
 
 // Define UART object for communication with Raspberry Pi via J1 (A6 = TX, A7 = RX)
@@ -74,16 +72,14 @@ void setup() {
   mySerial.begin(9600);
 
   // Initialize Sensors & Actuators
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-  pinMode(BUTTON_INBUILT, INPUT_PULLUP);
-  pinMode(LED_CONVEYOR, OUTPUT);
+  pinMode(BUTTON_CARRIER, INPUT_PULLUP); // Pin 13: Carrier onboard push button
+  pinMode(BUTTON_GROVE, INPUT_PULLUP);   // Pin 11: Grove J2 push button
   pinMode(LEDR, OUTPUT);
   pinMode(LEDG, OUTPUT);
   pinMode(LEDB, OUTPUT);
   digitalWrite(LEDR, HIGH); // RGB LEDs are active-low on Nano 33 BLE (HIGH = OFF)
   digitalWrite(LEDG, HIGH);
   digitalWrite(LEDB, HIGH);
-  digitalWrite(LED_CONVEYOR, LOW); // Conveyor stopped initially
 
   // Initialize Servo motor to starting position (0 degrees)
   myServo.attach(SERVO_PIN);
@@ -115,7 +111,7 @@ void setup() {
   Serial.println("==================================================");
   Serial.println("  WAREHOUSE AI CONVEYOR SORTING SYSTEM READY!    ");
   Serial.println("  Level 4 Architecture Initialized (Grayscale).  ");
-  Serial.println("  Press Push Button (D11 / Inbuilt) to Start Belt.");
+  Serial.println("  Press Onboard Carrier Button to Start Belt.    ");
   Serial.println("==================================================");
 }
 
@@ -129,9 +125,9 @@ void loop() {
     // STATE 0: IDLE (Waiting for operator to press Start Button)
     // --------------------------------------------------------------------------
     case STATE_IDLE: {
-      // Check both Grove Button (D11) and Built-in Shield Button (D13)
-      bool buttonPressed = (digitalRead(BUTTON_PIN) == LOW) || 
-                           (digitalRead(BUTTON_INBUILT) == LOW);
+      // Check both Carrier Onboard Button (Pin 13) and Grove Port J2 Button (Pin 11)
+      bool buttonPressed = (digitalRead(BUTTON_CARRIER) == LOW) || 
+                           (digitalRead(BUTTON_GROVE) == LOW);
 
       // Also allow pressing 's' or Enter in Arduino Serial Monitor to start
       if (Serial.available()) {
@@ -144,9 +140,9 @@ void loop() {
       if (buttonPressed) {
         delay(50); // Debounce
         Serial.println("\n[START] Button Triggered! Conveyor Belt Running...");
-        digitalWrite(LED_CONVEYOR, HIGH); // LED turns ON (Conveyor moving)
-        digitalWrite(LEDG, LOW);          // Green LED ON (Nano 33 BLE active-low)
+        digitalWrite(LEDG, LOW);          // Green LED ON (Conveyor active indicator)
         digitalWrite(LEDR, HIGH);         // Red LED OFF
+        digitalWrite(LEDB, HIGH);         // Blue LED OFF
         currentState = STATE_CONVEYOR_RUNNING;
         delay(400); // Prevent multi-triggering
       }
@@ -167,10 +163,9 @@ void loop() {
           Serial.print("[ZONE] Product Arrived! Proximity Value: ");
           Serial.println(proximity);
           
-          // Stop conveyor belt (LED turns OFF, Red inspection LED turns ON)
-          digitalWrite(LED_CONVEYOR, LOW);
-          digitalWrite(LEDG, HIGH); // Green OFF
-          digitalWrite(LEDR, LOW);  // Red ON
+          // Stop conveyor belt (Green OFF, Red inspection LED turns ON)
+          digitalWrite(LEDG, HIGH); // Green OFF (Conveyor stopped)
+          digitalWrite(LEDR, LOW);  // Red ON (Inspection zone active)
           Serial.println("[STOP] Conveyor Belt Stopped for AI Scanning.");
           
           currentState = STATE_OBJECT_DETECTED;
@@ -345,7 +340,7 @@ void loop() {
       
       digitalWrite(LEDR, HIGH);         // Red LED OFF
       digitalWrite(LEDG, HIGH);         // Green LED OFF
-      digitalWrite(LED_CONVEYOR, LOW);
+      digitalWrite(LEDB, HIGH);         // Blue LED OFF
       
       delay(1000);
       currentState = STATE_IDLE; // Reset to wait for next button / conveyor run

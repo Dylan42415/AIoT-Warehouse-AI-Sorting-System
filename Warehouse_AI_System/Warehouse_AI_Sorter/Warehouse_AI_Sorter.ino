@@ -13,7 +13,7 @@
   3. LED Indicator (Output Actuator 1)-> LED_BUILTIN (Pin D13) & RGB Status LEDs
   4. Servo Motor (Output Actuator 2) -> Grove J3: Pin D12 (Sorts item: 180 deg for 5s)
   5. Hardware UART Serial Gateway    -> Grove J1: A6 (TX) / A7 (RX) to Raspberry Pi
-  6. Edge Impulse TinyML Vision      -> OV7675 Camera on TinyML Carrier Bus
+  6. Edge Impulse TinyML Vision      -> OV7675 Camera (Native 96x96 Grayscale)
   7. USB Debug Monitor               -> Serial (9600 baud)
  ==============================================================================
 */
@@ -47,7 +47,7 @@ enum SystemState {
   STATE_IDLE,             // Waiting for warehouse operator to press Start Button
   STATE_CONVEYOR_RUNNING, // Conveyor belt moving (LED ON), polling proximity
   STATE_OBJECT_DETECTED,  // Object arrived at scan zone (Conveyor stops, LED OFF)
-  STATE_INFERENCE,        // AI Model analyzes the object (Mouse vs Charger vs BG)
+  STATE_INFERENCE,        // AI Model analyzes the object (Mouse vs Background)
   STATE_SORTING_ACTION,   // Servo sorts target item (180 deg for 5 sec)
   STATE_TRANSMIT_CLOUD    // Telemetry uploaded to Raspberry Pi gateway
 };
@@ -102,11 +102,11 @@ void setup() {
     Serial.println("✅ APDS-9960 Proximity Sensor Initialized.");
   }
 
-  // Initialize OV7675 TinyML Camera
-  Serial.println("[INIT] Initializing OV7675 Camera on TinyML Carrier...");
+  // Initialize OV7675 TinyML Camera in Native GRAYSCALE mode
+  Serial.println("[INIT] Initializing OV7675 Camera (Native Grayscale mode)...");
   if (ei_camera_init()) {
     cameraAvailable = true;
-    Serial.println("✅ OV7675 Camera Sensor Initialized Successfully.");
+    Serial.println("✅ OV7675 Camera Initialized in Native Grayscale Mode.");
   } else {
     cameraAvailable = false;
     Serial.println("⚠️ Notice: Camera not detected. Fallback interactive mode enabled.");
@@ -114,7 +114,7 @@ void setup() {
 
   Serial.println("==================================================");
   Serial.println("  WAREHOUSE AI CONVEYOR SORTING SYSTEM READY!    ");
-  Serial.println("  Level 4 Architecture Initialized.               ");
+  Serial.println("  Level 4 Architecture Initialized (Grayscale).  ");
   Serial.println("  Press Push Button (D11 / Inbuilt) to Start Belt.");
   Serial.println("==================================================");
 }
@@ -184,26 +184,27 @@ void loop() {
     // STATE 2: OBJECT DETECTED (Prepare Camera & Lighting)
     // --------------------------------------------------------------------------
     case STATE_OBJECT_DETECTED: {
-      Serial.println("[CAMERA] Aligning sensor & preparing image capture...");
-      delay(500); // Allow sensor auto-exposure to stabilize
+      Serial.println("[CAMERA] Aligning sensor & preparing Grayscale image capture...");
+      delay(400); // Allow sensor auto-exposure to stabilize
       currentState = STATE_INFERENCE;
       break;
     }
 
     // --------------------------------------------------------------------------
-    // STATE 3: AI INFERENCE (Edge Impulse TinyML Dynamic Classification)
+    // STATE 3: AI INFERENCE (Edge Impulse TinyML Dynamic Grayscale Classification)
     // --------------------------------------------------------------------------
     case STATE_INFERENCE: {
-      Serial.println("\n[TINYML] Executing Edge Impulse Neural Network Inference...");
+      Serial.println("\n[TINYML] Executing Edge Impulse Neural Network Inference (Grayscale)...");
       bool inferenceSuccess = false;
 
-      // 1. Attempt Live OV7675 Camera Inference
+      // 1. Attempt Live OV7675 Grayscale Camera Inference
       if (cameraAvailable || ei_camera_init()) {
         cameraAvailable = true;
 
+        // Allocate snapshot buffer for 96x96 Grayscale (9,216 bytes: 1 byte per pixel)
         void *snapshot_mem = NULL;
         uint8_t *snapshot_buf = NULL;
-        snapshot_mem = ei_malloc(resize_col_sz * resize_row_sz * 2);
+        snapshot_mem = ei_malloc(EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT);
 
         if (snapshot_mem != NULL) {
           snapshot_buf = (uint8_t *)DWORD_ALIGN_PTR((uintptr_t)snapshot_mem);

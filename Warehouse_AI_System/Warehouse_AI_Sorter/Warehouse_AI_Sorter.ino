@@ -28,8 +28,20 @@
 // ==============================================================================
 // 1. PIN & HARDWARE DEFINITIONS
 // ==============================================================================
-#define BUTTON_PIN          11          // Push Button on Grove port J2 (D11)
+#define BUTTON_CARRIER      13          // Built-in push button on TinyML Carrier (PB1 next to VIN)
+#define BUTTON_GROVE        11          // Optional external button on Grove port J2 (D11)
 #define SERVO_PIN           12          // Sorting Servo Motor Signal Pin (Grove port J3: D12)
+
+// Custom shield button pin setting to avoid LED resistor pulldown interference on Pin 13
+void nrf_gpio_cfg_out_with_input(uint32_t pin_number) {
+  nrf_gpio_cfg(
+    pin_number,
+    NRF_GPIO_PIN_DIR_OUTPUT,
+    NRF_GPIO_PIN_INPUT_CONNECT,
+    NRF_GPIO_PIN_PULLUP,
+    NRF_GPIO_PIN_S0S1,
+    NRF_GPIO_PIN_NOSENSE);
+}
 
 // Define UART object for communication with Raspberry Pi via J1 (A6 = TX, A7 = RX)
 UART mySerial(A6, A7, NC, NC);
@@ -87,17 +99,17 @@ void setup() {
   mySerial.begin(9600);
 
   // Initialize Sensors & Actuators
-  pinMode(BUTTON_PIN, INPUT_PULLUP);     // Pin 11: Push button on Grove port J2
+  // Carrier onboard button PB1 (Pin 13) setup with hardware bias
+  pinMode(BUTTON_CARRIER, OUTPUT);
+  digitalWrite(BUTTON_CARRIER, HIGH);
+  nrf_gpio_cfg_out_with_input(digitalPinToPinName(BUTTON_CARRIER));
+
   pinMode(LEDR, OUTPUT);
   pinMode(LEDG, OUTPUT);
   pinMode(LEDB, OUTPUT);
   digitalWrite(LEDR, HIGH); // RGB LEDs are active-low on Nano 33 BLE (HIGH = OFF)
   digitalWrite(LEDG, HIGH);
   digitalWrite(LEDB, HIGH);
-
-  // Initialize Servo motor to starting position (0 degrees)
-  myServo.attach(SERVO_PIN);
-  myServo.write(0);
 
   // Initialize APDS-9960 Proximity Sensor with retry
   int apdsRetries = 0;
@@ -112,7 +124,7 @@ void setup() {
     Serial.println("✅ APDS-9960 Proximity Sensor Initialized.");
   }
 
-  // Initialize OV7675 TinyML Camera in Native GRAYSCALE mode
+  // Initialize OV7675 TinyML Camera (ei_camera_init powers on and unresets sensor)
   Serial.println("[INIT] Initializing OV7675 Camera (Native Grayscale mode)...");
   if (ei_camera_init()) {
     cameraAvailable = true;
@@ -122,10 +134,13 @@ void setup() {
     Serial.println("⚠️ Notice: Camera not detected. Fallback interactive mode enabled.");
   }
 
+  // NOTE: Servo is attached dynamically during STATE_SORTING_ACTION only.
+  // This eliminates idle motor holding current and completely prevents 3.3V power sag brownout reboots.
+
   Serial.println("==================================================");
   Serial.println("  WAREHOUSE AI CONVEYOR SORTING SYSTEM READY!    ");
   Serial.println("  Level 4 Architecture Initialized (Grayscale).  ");
-  Serial.println("  Press Grove Button (D11) or type 's' to start! ");
+  Serial.println("  Press Carrier Button (PB1) or type 's' to start!");
   Serial.println("==================================================");
 }
 
@@ -139,13 +154,13 @@ void loop() {
     // STATE 0: IDLE (Waiting for operator to press Start Button)
     // --------------------------------------------------------------------------
     case STATE_IDLE: {
-      // Check Grove Port J2 Button (Pin 11)
-      bool buttonPressed = (digitalRead(BUTTON_PIN) == LOW);
+      // Check Carrier Onboard Button PB1 (Pin 13)
+      bool buttonPressed = (digitalRead(BUTTON_CARRIER) == LOW);
 
       // Also allow pressing 's' or Enter in Arduino Serial Monitor to start
       if (Serial.available()) {
         char c = Serial.read();
-        if (c == 's' || c == ' ' || c == '\n' || c == '\r') {
+        if (c == 's' || c == 'S' || c == ' ' || c == '\n' || c == '\r') {
           buttonPressed = true;
         }
       }
@@ -336,7 +351,8 @@ void loop() {
     case STATE_SORTING_ACTION: {
       if (detectedProduct == "mouse" && confidenceScore >= 70) {
         Serial.println(">>> TARGET PRODUCT IDENTIFIED (MOUSE)! <<<");
-        Serial.println("[SERVO] Actuating Sorting Arm smoothly to 180 DEGREES...");
+        Serial.println("[SERVO] Dynamically attaching servo & actuating to 180 DEGREES...");
+        myServo.attach(SERVO_PIN);
         smoothServoMove(0, 180, 15);
         
         Serial.println("[SERVO] Holding at 180 degrees for 5 SECONDS to push product into bin...");
@@ -344,6 +360,11 @@ void loop() {
         
         Serial.println("[SERVO] Returning smoothly to 0 DEGREES.");
         smoothServoMove(180, 0, 15);
+        
+        // Detach immediately to eliminate idle holding current and prevent 3.3V power sag brownouts
+        myServo.detach();
+        pinMode(SERVO_PIN, OUTPUT);
+        digitalWrite(SERVO_PIN, HIGH); // Re-assert camera power enable
         sortedActionTaken = true;
       } else {
         Serial.print("[IGNORE] Non-target or Background detected: '");
@@ -352,7 +373,6 @@ void loop() {
         Serial.print(confidenceScore);
         Serial.println("%).");
         Serial.println("[SERVO] Sorting arm remains idle at 0 DEGREES (NO ACTION).");
-        myServo.write(0);
         sortedActionTaken = false;
       }
       

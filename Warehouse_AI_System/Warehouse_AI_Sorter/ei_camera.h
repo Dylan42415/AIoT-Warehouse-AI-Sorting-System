@@ -541,6 +541,8 @@ int OV7675::deallocate_scratch_buffs()
     return 0;
 }
 
+#define CAMERA_SIGNAL_TIMEOUT 100000UL
+
 //
 // OV7675::readFrame()
 //
@@ -552,19 +554,28 @@ int OV7675::deallocate_scratch_buffs()
 //
 void OV7675::readFrame(void* buffer)
 {
-    allocate_scratch_buffs();
+    if (allocate_scratch_buffs() != 0 || raw_buf == NULL) {
+        return;
+    }
 
     uint8_t* out = (uint8_t*)buffer;
-    noInterrupts();
 
-    // Falling edge indicates start of frame
-    while ((*vsyncPort & vsyncMask) == 0); // wait for HIGH
-    while ((*vsyncPort & vsyncMask) != 0); // wait for LOW
+    // Wait for VSYNC frame start with bounded timeout
+    uint32_t to = CAMERA_SIGNAL_TIMEOUT;
+    while ((*vsyncPort & vsyncMask) == 0) {
+        if (--to == 0) { deallocate_scratch_buffs(); return; }
+    }
+    to = CAMERA_SIGNAL_TIMEOUT;
+    while ((*vsyncPort & vsyncMask) != 0) {
+        if (--to == 0) { deallocate_scratch_buffs(); return; }
+    }
 
     int out_row = 0;
     for (int raw_height = 0; raw_height < height; raw_height += buf_rows) {
-        // read in 640xbuf_rows buffer to work with
+        // Disable interrupts strictly during high-speed parallel pixel read
+        noInterrupts();
         readBuf();
+        interrupts(); // Re-enable immediately for UART and timer processing
 
         resizeImage(width, buf_rows,
                     raw_buf,
@@ -574,8 +585,6 @@ void OV7675::readFrame(void* buffer)
 
         out_row += resize_col_sz * resize_height * bytes_per_pixel; /* resize_col_sz * 2 * 2 */
     }
-
-    interrupts();
 
     deallocate_scratch_buffs();
 } /* OV7675::readFrame() */
@@ -596,12 +605,18 @@ void OV7675::readBuf()
     port = nrf_gpio_pin_port_decode(&ulPin);
 
     for (int i = 0; i < buf_rows; i++) {
-        // rising edge indicates start of line
-        while ((*hrefPort & hrefMask) == 0); // wait for HIGH
+        // rising edge indicates start of line with timeout
+        uint32_t to = CAMERA_SIGNAL_TIMEOUT;
+        while ((*hrefPort & hrefMask) == 0) {
+            if (--to == 0) return;
+        }
 
         for (int col = 0; col < bytes_per_row; col++) {
             // rising edges clock each data byte
-            while ((*pclkPort & pclkMask) != 0); // wait for LOW
+            to = CAMERA_SIGNAL_TIMEOUT;
+            while ((*pclkPort & pclkMask) != 0) {
+                if (--to == 0) return;
+            }
 
             uint32_t in = port->IN; // read all bits in parallel
 
@@ -611,10 +626,16 @@ void OV7675::readBuf()
 
             raw_buf[offset++] = in;
 
-            while ((*pclkPort & pclkMask) == 0); // wait for HIGH
+            to = CAMERA_SIGNAL_TIMEOUT;
+            while ((*pclkPort & pclkMask) == 0) {
+                if (--to == 0) return;
+            }
         }
 
-        while ((*hrefPort & hrefMask) != 0); // wait for LOW
+        to = CAMERA_SIGNAL_TIMEOUT;
+        while ((*hrefPort & hrefMask) != 0) {
+            if (--to == 0) return;
+        }
     }
 } /* OV7675::readBuf() */
 

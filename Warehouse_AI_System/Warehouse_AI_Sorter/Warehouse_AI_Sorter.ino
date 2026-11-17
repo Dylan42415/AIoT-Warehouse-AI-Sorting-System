@@ -37,6 +37,21 @@ UART mySerial(A6, A7, NC, NC);
 // Servo instance
 Servo myServo;
 
+// Slew-rate limited servo movement: prevents sudden inrush current and brownout resets
+void smoothServoMove(int startAngle, int targetAngle, int stepDelayMs = 15) {
+  if (startAngle < targetAngle) {
+    for (int pos = startAngle; pos <= targetAngle; pos += 5) {
+      myServo.write(pos);
+      delay(stepDelayMs);
+    }
+  } else {
+    for (int pos = startAngle; pos >= targetAngle; pos -= 5) {
+      myServo.write(pos);
+      delay(stepDelayMs);
+    }
+  }
+}
+
 // ==============================================================================
 // 2. FINITE STATE MACHINE (FSM) STATES
 // ==============================================================================
@@ -152,6 +167,17 @@ void loop() {
     // --------------------------------------------------------------------------
     case STATE_CONVEYOR_RUNNING: {
       static int closeDetectionCount = 0;
+      static unsigned long conveyorStartTime = 0;
+      if (conveyorStartTime == 0) conveyorStartTime = millis();
+
+      // Conveyor auto-timeout after 25s of continuous run to prevent indefinite stall
+      if (millis() - conveyorStartTime > 25000) {
+        Serial.println("[TIMEOUT] Conveyor timed out after 25s. Resetting to IDLE.");
+        conveyorStartTime = 0;
+        digitalWrite(LEDG, HIGH);
+        currentState = STATE_IDLE;
+        break;
+      }
       
       // Check for approaching product via Proximity Sensor
       if (APDS.proximityAvailable()) {
@@ -162,6 +188,7 @@ void loop() {
           closeDetectionCount++;
           if (closeDetectionCount >= 2) { // Requires 2 consecutive readings (~200ms)
             closeDetectionCount = 0;
+            conveyorStartTime = 0;
             Serial.print("[ZONE] Product Confirmed! Proximity Value: ");
             Serial.println(proximity);
             
@@ -210,7 +237,7 @@ void loop() {
 
         void *snapshot_mem = NULL;
         uint8_t *snapshot_buf = NULL;
-        snapshot_mem = ei_malloc(resize_col_sz * resize_row_sz * 2);
+        snapshot_mem = ei_malloc((resize_col_sz * resize_row_sz * 2) + 8);
 
         if (snapshot_mem != NULL) {
           snapshot_buf = (uint8_t *)DWORD_ALIGN_PTR((uintptr_t)snapshot_mem);
@@ -309,14 +336,14 @@ void loop() {
     case STATE_SORTING_ACTION: {
       if (detectedProduct == "mouse" && confidenceScore >= 70) {
         Serial.println(">>> TARGET PRODUCT IDENTIFIED (MOUSE)! <<<");
-        Serial.println("[SERVO] Actuating Sorting Arm to 180 DEGREES...");
-        myServo.write(180);
+        Serial.println("[SERVO] Actuating Sorting Arm smoothly to 180 DEGREES...");
+        smoothServoMove(0, 180, 15);
         
         Serial.println("[SERVO] Holding at 180 degrees for 5 SECONDS to push product into bin...");
         delay(5000); // 5 seconds hold as strictly required by exam rubric
         
-        Serial.println("[SERVO] Returning seamlessly to 0 DEGREES.");
-        myServo.write(0);
+        Serial.println("[SERVO] Returning smoothly to 0 DEGREES.");
+        smoothServoMove(180, 0, 15);
         sortedActionTaken = true;
       } else {
         Serial.print("[IGNORE] Non-target or Background detected: '");

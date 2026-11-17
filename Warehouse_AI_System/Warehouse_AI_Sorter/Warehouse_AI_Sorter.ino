@@ -196,6 +196,8 @@ void loop() {
     case STATE_INFERENCE: {
       Serial.println("\n[TINYML] Executing Edge Impulse Neural Network Inference (Grayscale)...");
       bool inferenceSuccess = false;
+      detectedProduct = "none";
+      confidenceScore = 0;
 
       // 1. Attempt Live OV7675 Camera Inference
       if (cameraAvailable || ei_camera_init()) {
@@ -244,7 +246,7 @@ void loop() {
 
               if (maxIdx >= 0) {
                 detectedProduct = String(ei_classifier_inferencing_categories[maxIdx]);
-                confidenceScore = (int)(maxScore * 100.0f);
+                confidenceScore = (int)roundf(maxScore * 100.0f);
               }
             } else {
               Serial.print("[ERR] run_classifier failed with error: ");

@@ -53,8 +53,8 @@ class OV7675 : public OV767X {
 };
 
 typedef struct {
-	size_t width;
-	size_t height;
+    size_t width;
+    size_t height;
 } ei_device_resize_resolutions_t;
 
 int ei_get_serial_available(void) {
@@ -88,27 +88,26 @@ int calculate_resize_dimensions(uint32_t out_width, uint32_t out_height, uint32_
 void resizeImage(int srcWidth, int srcHeight, uint8_t *srcImage, int dstWidth, int dstHeight, uint8_t *dstImage, int iBpp);
 void cropImage(int srcWidth, int srcHeight, uint8_t *srcImage, int startX, int startY, int dstWidth, int dstHeight, uint8_t *dstImage, int iBpp);
 
+/**
+ * @brief      Match Edge Impulse EI_CLASSIFIER_RESIZE_SQUASH (96x96 direct squash, no crop)
+ */
 int calculate_resize_dimensions(uint32_t out_width, uint32_t out_height, uint32_t *resize_col_sz, uint32_t *resize_row_sz, bool *do_resize)
 {
-    // Match EI_CLASSIFIER_RESIZE_SQUASH 1:1:
-    // Squash full VGA (640x480) directly into out_width x out_height (e.g. 96x96)
-    // without center-cropping, matching the Edge Impulse training geometry 1:1.
     *resize_col_sz = out_width;
     *resize_row_sz = out_height;
     *do_resize = true;
-
     return 0;
 }
 
 /**
- * @brief   Setup image sensor & start streaming (Pure Stock Official Implementation)
+ * @brief   Setup image sensor & start streaming (1 FPS required for bit-banged VGA)
  */
 bool ei_camera_init(void) {
     if (is_initialised) return true;
 
-    // Supported FPS on Nano 33 BLE in Arduino_OV767X library: 1 or 5
-    if (!Cam.begin(QQVGA, RGB565, 5)) {
-        ei_printf("ERR: Failed to initialize camera at 5 fps\r\n");
+    // 1 FPS is required when OV7675::begin overrides to VGA so PCLK does not outrun GPIO polling
+    if (!Cam.begin(QQVGA, RGB565, 1)) {
+        ei_printf("ERR: Failed to initialize camera\r\n");
         return false;
     }
     is_initialised = true;
@@ -141,9 +140,7 @@ bool ei_camera_capture(uint32_t img_width, uint32_t img_height, uint8_t *out_buf
         return false;
     }
 
-    if ((img_width != resize_col_sz) || (img_height != resize_row_sz)) {
-        do_crop = true;
-    }
+    do_crop = ((img_width != resize_col_sz) || (img_height != resize_row_sz));
 
     if (!Cam.readFrame(out_buf)) {
         ei_printf("ERR: Camera readFrame failed\r\n");
@@ -239,15 +236,15 @@ void resizeImage(int srcWidth, int srcHeight, uint8_t *srcImage, int dstWidth, i
                 src_x_accum += src_x_frac;
                 p00 = s[tx]; p10 = s[tx+1];
                 p01 = s[tx+srcWidth]; p11 = s[tx+srcWidth+1];
-        #ifdef __ARM_FEATURE_SIMD32
+#ifdef __ARM_FEATURE_SIMD32
                 p00 = __SMLAD(p00 | (p10<<16), x_frac2, FRAC_VAL/2) >> FRAC_BITS;
                 p01 = __SMLAD(p01 | (p11<<16), x_frac2, FRAC_VAL/2) >> FRAC_BITS;
                 p00 = __SMLAD(p00 | (p01<<16), y_frac2, FRAC_VAL/2) >> FRAC_BITS;
-        #else
+#else
                 p00 = ((p00 * nx_frac) + (p10 * x_frac) + FRAC_VAL/2) >> FRAC_BITS;
                 p01 = ((p01 * nx_frac) + (p11 * x_frac) + FRAC_VAL/2) >> FRAC_BITS;
                 p00 = ((p00 * ny_frac) + (p01 * y_frac) + FRAC_VAL/2) >> FRAC_BITS;
-        #endif
+#endif
                 *d++ = (uint8_t)p00;
             }
         } else {
@@ -261,7 +258,7 @@ void resizeImage(int srcWidth, int srcHeight, uint8_t *srcImage, int dstWidth, i
                 src_x_accum += src_x_frac;
                 p00 = __builtin_bswap16(s16[tx]); p10 = __builtin_bswap16(s16[tx+1]);
                 p01 = __builtin_bswap16(s16[tx+srcWidth]); p11 = __builtin_bswap16(s16[tx+srcWidth+1]);
-        #ifdef __ARM_FEATURE_SIMD32
+#ifdef __ARM_FEATURE_SIMD32
                 {
                 p00 |= (p10 << 16);
                 p01 |= (p11 << 16);
@@ -277,7 +274,7 @@ void resizeImage(int srcWidth, int srcHeight, uint8_t *srcImage, int dstWidth, i
                 b01 = __SMLAD(b01, x_frac2, FRAC_VAL/2) >> FRAC_BITS;
                 b00 = __SMLAD(b00 | (b01<<16), y_frac2, FRAC_VAL/2) >> FRAC_BITS;
                 }
-        #else
+#else
                 {
                 r00 = (p00 & r_mask) >> 1; g00 = p00 & g_mask; b00 = p00 & b_mask;
                 r10 = (p10 & r_mask) >> 1; g10 = p10 & g_mask; b10 = p10 & b_mask;
@@ -293,7 +290,7 @@ void resizeImage(int srcWidth, int srcHeight, uint8_t *srcImage, int dstWidth, i
                 b01 = ((b01 * nx_frac) + (b11 * x_frac) + FRAC_VAL/2) >> FRAC_BITS;
                 b00 = ((b00 * ny_frac) + (b01 * y_frac) + FRAC_VAL/2) >> FRAC_BITS;
                 }
-        #endif
+#endif
                 r00 = (r00 << 1) & r_mask;
                 g00 = g00 & g_mask;
                 b00 = b00 & b_mask;
@@ -343,7 +340,7 @@ void cropImage(int srcWidth, int srcHeight, uint8_t *srcImage, int startX, int s
         s = (uint16_t *)&srcImage[2 * srcWidth * (y + startY) + startX * 2];
         d = (uint16_t *)&dstImage[(dstWidth * y * 2)];
         x = 0;
-        if ((intptr_t)s & 3 || (intptr_t)d & 3) {
+        if ((intptr_t)s & 2 || (intptr_t)d & 2) {
           for (; x<dstWidth; x++) {
             *d++ = *s++;
           }
@@ -431,42 +428,36 @@ bool OV7675::readFrame(void* buffer)
 
     uint8_t* out = (uint8_t*)buffer;
 
-    // Synchronize to the start of a new frame with timeout protection
-    noInterrupts();
+    // Wait for VSYNC falling edge (start of frame)
     uint32_t to = 5000000UL;
     while ((*vsyncPort & vsyncMask) == 0) {
         if (--to == 0) {
-            interrupts();
             deallocate_scratch_buffs();
-            ei_printf("ERR: VSYNC timeout (wait for HIGH)\r\n");
+            ei_printf("ERR: VSYNC timeout (wait HIGH)\r\n");
             return false;
         }
     }
     to = 5000000UL;
     while ((*vsyncPort & vsyncMask) != 0) {
         if (--to == 0) {
-            interrupts();
             deallocate_scratch_buffs();
-            ei_printf("ERR: VSYNC timeout (wait for LOW)\r\n");
+            ei_printf("ERR: VSYNC timeout (wait LOW)\r\n");
             return false;
         }
     }
-    interrupts();
 
     int out_row = 0;
     for (int raw_height = 0; raw_height < height; raw_height += buf_rows) {
-        // Only disable interrupts during hardware pin streaming to prevent jitter
         noInterrupts();
-        bool read_ok = readBuf();
+        bool ok = readBuf();
         interrupts();
 
-        if (!read_ok) {
+        if (!ok) {
             deallocate_scratch_buffs();
             ei_printf("ERR: HREF/PCLK timeout\r\n");
             return false;
         }
 
-        // Fast Cortex-M4 SIMD Bilinear Resizing with interrupts enabled
         resizeImage(width, buf_rows,
                     raw_buf,
                     resize_col_sz, resize_height,

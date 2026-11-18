@@ -97,14 +97,22 @@ bool cameraAvailable = false;
 bool calibrationMode = false;
 
 // Proximity threshold (APDS-9960: 0 = closest, 255 = far, Lab 03 & Lab 12)
-// Threshold 40 guards against ambient room light and table reflection false-triggers
 const int PROXIMITY_THRESHOLD = 40; 
 
 // Conveyor timeout tracker at file scope
 unsigned long conveyorStartTime = 0;
 
+// Helper to compute grayscale luma from a 16-bit RGB565 pixel
+static inline uint8_t rgb565ToLuma(uint8_t hi, uint8_t lo) {
+  uint16_t pixel = ((uint16_t)hi << 8) | lo;
+  uint8_t r = ((pixel >> 11) & 0x1f) << 3;
+  uint8_t g = ((pixel >> 5) & 0x3f) << 2;
+  uint8_t b = (pixel & 0x1f) << 3;
+  return (uint8_t)((r * 299UL + g * 587UL + b * 114UL) / 1000UL);
+}
+
 // ==============================================================================
-// LIVE CAMERA CALIBRATION & LUMA DIAGNOSTIC TICK ('c' / 'x')
+// LIVE CAMERA CALIBRATION, 24x24 ASCII VIEWER & LUMA DIAGNOSTIC ('c' / 'x')
 // ==============================================================================
 void runCalibrationTick() {
   if (!cameraAvailable && !ei_camera_init()) {
@@ -131,18 +139,29 @@ void runCalibrationTick() {
     return;
   }
 
-  // Calculate Grayscale Luminance statistics across cropped 96x96 RGB565 frame
+  // Print 24x24 ASCII preview of the 96x96 frame so user can visually align the mouse
+  const char *asciiRamp = " .:-=+*#%@";
+  Serial.println("\n  +------------------------+ (24x24 Live Camera View)");
+  for (uint32_t y = 0; y < EI_CLASSIFIER_INPUT_HEIGHT; y += 4) {
+    Serial.print("  |");
+    for (uint32_t x = 0; x < EI_CLASSIFIER_INPUT_WIDTH; x += 4) {
+      uint32_t idx = (y * EI_CLASSIFIER_INPUT_WIDTH + x) * 2;
+      uint8_t luma = rgb565ToLuma(snapshot_buf[idx], snapshot_buf[idx + 1]);
+      uint8_t rampIdx = (uint8_t)((luma * 9UL) / 255UL);
+      Serial.print(asciiRamp[rampIdx]);
+    }
+    Serial.println("|");
+  }
+  Serial.println("  +------------------------+");
+
+  // Calculate Grayscale Luminance statistics across 96x96 RGB565 frame
   uint32_t totalPixels = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT;
   uint32_t lumaSum = 0;
   uint8_t minLuma = 255;
   uint8_t maxLuma = 0;
 
   for (uint32_t i = 0; i < totalPixels; i++) {
-    uint16_t pixel = (snapshot_buf[i * 2] << 8) | snapshot_buf[i * 2 + 1];
-    uint8_t r = ((pixel >> 11) & 0x1f) << 3;
-    uint8_t g = ((pixel >> 5) & 0x3f) << 2;
-    uint8_t b = (pixel & 0x1f) << 3;
-    uint8_t luma = (uint8_t)((r * 299 + g * 587 + b * 114) / 1000);
+    uint8_t luma = rgb565ToLuma(snapshot_buf[i * 2], snapshot_buf[i * 2 + 1]);
     lumaSum += luma;
     if (luma < minLuma) minLuma = luma;
     if (luma > maxLuma) maxLuma = luma;
@@ -170,7 +189,6 @@ void runCalibrationTick() {
     }
   }
 
-  // Format: [CAL] Luma avg:<avg> (min:<min>, max:<max>) | mouse: <xx.x>% | background: <xx.x>%
   Serial.print("[CAL] Luma avg:");
   Serial.print(avgLuma);
   Serial.print(" (min:");
@@ -190,18 +208,12 @@ void runCalibrationTick() {
 // 3. SETUP FUNCTION
 // ==============================================================================
 void setup() {
-  // Start USB serial for debugging
   Serial.begin(9600);
-  
-  // Start Hardware UART communication with Raspberry Pi at 9600 baud rate (Lab 07)
   mySerial.begin(9600);
 
-  // Initialize Sensors & Actuators
-  // Carrier onboard button PB1 (Pin 13) setup with standard INPUT_PULLUP and Interrupt (Lab 13)
   pinMode(BUTTON_CARRIER, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(BUTTON_CARRIER), button_interrupt, FALLING);
 
-  // Onboard RGB LEDs (active-low on Nano 33 BLE: HIGH = OFF, LOW = ON)
   pinMode(LEDR, OUTPUT);
   pinMode(LEDG, OUTPUT);
   pinMode(LEDB, OUTPUT);
@@ -209,7 +221,6 @@ void setup() {
   digitalWrite(LEDG, HIGH);
   digitalWrite(LEDB, HIGH);
 
-  // Initialize APDS-9960 Proximity Sensor (Lab 03 & Lab 12)
   int apdsRetries = 0;
   while (!APDS.begin() && apdsRetries < 3) {
     Serial.println("⚠️ Warning: APDS-9960 retry initialization...");
@@ -222,7 +233,6 @@ void setup() {
     Serial.println("✅ APDS-9960 Proximity Sensor Initialized.");
   }
 
-  // Initialize OV7675 TinyML Camera
   Serial.println("[INIT] Initializing OV7675 Camera (Native Grayscale mode)...");
   if (ei_camera_init()) {
     cameraAvailable = true;
@@ -239,7 +249,7 @@ void setup() {
   Serial.println("    • Press PB1 or type 's': Start Conveyor / Trigger Scan");
   Serial.println("    • Type 'm': Instant Mouse Demo (180 deg Servo for 5s)");
   Serial.println("    • Type 'b': Instant Background Demo (Servo Idle at 0 deg)");
-  Serial.println("    • Type 'c': Enter Live Camera Calibration / Luma Diagnostic");
+  Serial.println("    • Type 'c': Enter Live Camera Calibration + ASCII View");
   Serial.println("    • Type 'x': Exit Live Camera Calibration");
   Serial.println("==================================================");
 }
@@ -249,27 +259,23 @@ void setup() {
 // ==============================================================================
 void loop() {
 
-  // Global Serial Commands for Easy Testing & Examiner Demonstrations
   if (Serial.available()) {
     char c = Serial.read();
 
-    // Ignore newline and carriage return to prevent multi-byte state cascade
     if (c == '\r' || c == '\n') {
       return;
     }
     
-    // Instant Target Demo: 'm' immediately sorts mouse
     if (c == 'm' || c == 'M') {
       Serial.println("\n[DEMO] >>> INJECTING MOUSE TARGET DETECTION (96%) <<<");
       detectedProduct = "mouse";
       confidenceScore = 96;
-      digitalWrite(LEDG, HIGH); // Green OFF
-      digitalWrite(LEDR, LOW);  // Red ON (Inspection active)
+      digitalWrite(LEDG, HIGH);
+      digitalWrite(LEDR, LOW);
       currentState = STATE_SORTING_ACTION;
       return;
     }
     
-    // Instant Background Demo: 'b' demonstrates non-target pass-through
     if (c == 'b' || c == 'B') {
       Serial.println("\n[DEMO] >>> INJECTING BACKGROUND NON-TARGET (98%) <<<");
       detectedProduct = "background";
@@ -280,34 +286,30 @@ void loop() {
       return;
     }
 
-    // Live Camera Calibration & Luma Diagnostic Mode: 'c' enters continuous stream
     if (c == 'c' || c == 'C') {
       if (currentState == STATE_IDLE || currentState == STATE_CONVEYOR_RUNNING) {
         calibrationMode = true;
-        digitalWrite(LEDG, HIGH); // Green OFF
-        digitalWrite(LEDR, LOW);  // Red ON (Inspection/Calibration active)
-        digitalWrite(LEDB, HIGH); // Blue OFF
+        digitalWrite(LEDG, HIGH);
+        digitalWrite(LEDR, LOW);
+        digitalWrite(LEDB, HIGH);
         Serial.println("\n[CAL] === ENTERING LIVE CAMERA CALIBRATION MODE ===");
-        Serial.println("[CAL] Streaming live Luma (0-255) + TinyML confidence every 1.2s.");
-        Serial.println("[CAL] Adjust mouse height (15-20cm), angle, and lighting until mouse >= 70%.");
+        Serial.println("[CAL] Streaming 24x24 ASCII preview + Luma + TinyML confidence.");
         Serial.println("[CAL] Type 'x' to exit calibration or 's' to start conveyor sorting.");
         return;
       }
     }
 
-    // Exit Calibration Mode: 'x'
     if (c == 'x' || c == 'X') {
       if (calibrationMode) {
         calibrationMode = false;
-        digitalWrite(LEDR, HIGH); // Red OFF
-        digitalWrite(LEDG, HIGH); // Green OFF
+        digitalWrite(LEDR, HIGH);
+        digitalWrite(LEDG, HIGH);
         Serial.println("\n[CAL] === EXITED CAMERA CALIBRATION MODE (Back to IDLE) ===");
         currentState = STATE_IDLE;
         return;
       }
     }
     
-    // 's' or space command: Start conveyor if idle, or trigger immediate snapshot if running
     if (c == 's' || c == 'S' || c == ' ') {
       if (calibrationMode) {
         calibrationMode = false;
@@ -315,8 +317,8 @@ void loop() {
       }
       if (currentState == STATE_IDLE) {
         Serial.println("\n[START] Conveyor Belt Running (Green LED ON)...");
-        digitalWrite(LEDG, LOW);  // Green LED ON
-        digitalWrite(LEDR, HIGH); // Red LED OFF
+        digitalWrite(LEDG, LOW);
+        digitalWrite(LEDR, HIGH);
         conveyorStartTime = millis();
         sortedActionTaken = false;
         buttonTriggered = false;
@@ -332,56 +334,46 @@ void loop() {
     }
   }
 
-  // If in calibration mode, run periodic frame evaluation and skip normal state transitions
   if (calibrationMode) {
     static unsigned long lastCalibTick = 0;
-    if (millis() - lastCalibTick >= 1200) {
+    if (millis() - lastCalibTick >= 1500) {
       lastCalibTick = millis();
       runCalibrationTick();
     }
     return;
   }
 
-  // Handle State Machine
   switch (currentState) {
     
-    // --------------------------------------------------------------------------
-    // STATE 0: IDLE (Waiting for operator to press Start Button)
-    // --------------------------------------------------------------------------
     case STATE_IDLE: {
       if (isButtonPressed()) {
-        delay(50); // Debounce
+        delay(50);
         Serial.println("\n[START] Button PB1 Triggered! Conveyor Belt Running (Green LED ON)...");
-        digitalWrite(LEDG, LOW);          // Green LED ON (Conveyor active indicator)
-        digitalWrite(LEDR, HIGH);         // Red LED OFF
-        digitalWrite(LEDB, HIGH);         // Blue LED OFF
+        digitalWrite(LEDG, LOW);
+        digitalWrite(LEDR, HIGH);
+        digitalWrite(LEDB, HIGH);
         conveyorStartTime = millis();
-        sortedActionTaken = false;        // Reset sorting action flag at cycle start
+        sortedActionTaken = false;
         currentState = STATE_CONVEYOR_RUNNING;
-        delay(200); // Prevent multi-triggering
-        buttonTriggered = false;          // Fix mechanical button release bounce
+        delay(200);
+        buttonTriggered = false;
       }
       break;
     }
 
-    // --------------------------------------------------------------------------
-    // STATE 1: CONVEYOR RUNNING (Monitoring Proximity Sensor - Lab 03 & 12)
-    // --------------------------------------------------------------------------
     case STATE_CONVEYOR_RUNNING: {
       static unsigned long lastProxPrint = 0;
       static int proxHitCount = 0;
 
-      // Conveyor auto-timeout after 30s of continuous run to prevent indefinite stall
       if (millis() - conveyorStartTime > 30000) {
         Serial.println("\n[TIMEOUT] Conveyor timed out after 30s. Resetting to IDLE.");
         conveyorStartTime = 0;
         proxHitCount = 0;
-        digitalWrite(LEDG, HIGH); // Green LED OFF
+        digitalWrite(LEDG, HIGH);
         currentState = STATE_IDLE;
         break;
       }
 
-      // Check for manual trigger via PB1 button
       if (isButtonPressed()) {
         delay(50);
         Serial.println("\n[TRIGGER] Manual Product Arrival Triggered via Button PB1!");
@@ -391,11 +383,9 @@ void loop() {
         break;
       }
 
-      // Read APDS-9960 Proximity Sensor (Lecturer Lab 03 & Lab 12)
       if (APDS.proximityAvailable()) {
         int proximity = APDS.readProximity();
 
-        // Stream live proximity telemetry every 350ms so user sees real-time distance
         if (millis() - lastProxPrint > 350) {
           lastProxPrint = millis();
           Serial.print("  [CONVEYOR] Proximity: ");
@@ -403,7 +393,6 @@ void loop() {
           Serial.println("  (Bring mouse < 40 to scan, or press PB1 / 's')");
         }
 
-        // Proximity threshold (< 40) with 2 consecutive samples to confirm true arrival
         if (proximity >= 0 && proximity < PROXIMITY_THRESHOLD) {
           proxHitCount++;
           if (proxHitCount >= 2) {
@@ -423,13 +412,10 @@ void loop() {
       break;
     }
 
-    // --------------------------------------------------------------------------
-    // STATE 2: OBJECT DETECTED (Prepare Camera & Lighting)
-    // --------------------------------------------------------------------------
     case STATE_OBJECT_DETECTED: {
-      digitalWrite(LEDG, HIGH); // Green OFF (Conveyor stopped)
-      digitalWrite(LEDR, LOW);  // Red ON (Inspection zone active)
-      digitalWrite(LEDB, HIGH); // Blue OFF
+      digitalWrite(LEDG, HIGH);
+      digitalWrite(LEDR, LOW);
+      digitalWrite(LEDB, HIGH);
       Serial.println("[STOP] Conveyor Belt Stopped for AI Scanning (Red LED ON).");
       Serial.println("[CAMERA] Aligning OV7675 camera for Grayscale capture...");
       delay(200);
@@ -437,16 +423,12 @@ void loop() {
       break;
     }
 
-    // --------------------------------------------------------------------------
-    // STATE 3: AI INFERENCE (Edge Impulse TinyML Dynamic Grayscale Classification - Lab 15)
-    // --------------------------------------------------------------------------
     case STATE_INFERENCE: {
       Serial.println("\n[TINYML] Executing Edge Impulse Neural Network Inference (Grayscale)...");
       bool inferenceSuccess = false;
       detectedProduct = "none";
       confidenceScore = 0;
 
-      // 1. Attempt Live OV7675 Camera Inference
       if (cameraAvailable || ei_camera_init()) {
         cameraAvailable = true;
 
@@ -462,12 +444,7 @@ void loop() {
         if (snapshot_mem != NULL) {
           snapshot_buf = (uint8_t *)DWORD_ALIGN_PTR((uintptr_t)snapshot_mem);
 
-          // Flush 2 dummy frames so OV7675 Auto-Exposure (AEC) and Auto-Gain (AGC) pipeline stabilize at 15 fps
-          for (int f = 0; f < 2; f++) {
-            ei_camera_capture(EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT, snapshot_buf);
-          }
-
-          // Real frame capture for neural network inference
+          // Single clean frame capture at 1 FPS VGA (avoids 4.3s multi-frame delay)
           if (ei_camera_capture(EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT, snapshot_buf)) {
             ei::signal_t signal;
             signal.total_length = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT;
@@ -514,7 +491,6 @@ void loop() {
         }
       }
 
-      // 2. Safe Fallback if Live Capture Failed: Do NOT false-trigger servo
       if (!inferenceSuccess) {
         Serial.println("[WARN] Live capture unavailable. Non-target assumed (motor remains idle).");
         detectedProduct = "background";
@@ -531,9 +507,6 @@ void loop() {
       break;
     }
 
-    // --------------------------------------------------------------------------
-    // STATE 4: SORTING ACTION (Selective Servo Motor Control - Lab 11 & 12)
-    // --------------------------------------------------------------------------
     case STATE_SORTING_ACTION: {
       if (detectedProduct == "mouse" && confidenceScore >= 70) {
         Serial.println(">>> TARGET PRODUCT IDENTIFIED (MOUSE)! <<<");
@@ -543,12 +516,11 @@ void loop() {
         smoothServoMove(0, 180, 15);
         
         Serial.println("[SERVO] Holding at 180 degrees for 5 SECONDS to push product into bin (Rubric Rule)...");
-        delay(5000); // 5 seconds hold as strictly required by exam rubric
+        delay(5000);
         
         Serial.println("[SERVO] Returning smoothly to 0 DEGREES.");
         smoothServoMove(180, 0, 15);
         
-        // Detach immediately to eliminate idle holding current and prevent 3.3V power sag brownouts
         servoPrimary.detach();
         servoSecondary.detach();
         sortedActionTaken = true;
@@ -566,9 +538,6 @@ void loop() {
       break;
     }
 
-    // --------------------------------------------------------------------------
-    // STATE 5: CLOUD TRANSMISSION (UART to Raspberry Pi -> MQTT ThingSpeak - Lab 07 & 08)
-    // --------------------------------------------------------------------------
     case STATE_TRANSMIT_CLOUD: {
       mySerial.println(confidenceScore);
       
@@ -577,14 +546,14 @@ void loop() {
       Serial.println("%");
       Serial.println("[STATUS] Sorting Cycle Complete. Resetting to IDLE.\n");
       
-      digitalWrite(LEDR, HIGH);         // Red LED OFF
-      digitalWrite(LEDG, HIGH);         // Green LED OFF
-      digitalWrite(LEDB, HIGH);         // Blue LED OFF
+      digitalWrite(LEDR, HIGH);
+      digitalWrite(LEDG, HIGH);
+      digitalWrite(LEDB, HIGH);
       
       delay(1000);
       buttonTriggered = false;
       sortedActionTaken = false;
-      currentState = STATE_IDLE; // Reset to wait for next button / conveyor run
+      currentState = STATE_IDLE;
       break;
     }
   }

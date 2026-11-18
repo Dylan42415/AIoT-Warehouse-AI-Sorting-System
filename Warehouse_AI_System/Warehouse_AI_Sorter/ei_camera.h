@@ -90,21 +90,12 @@ void cropImage(int srcWidth, int srcHeight, uint8_t *srcImage, int startX, int s
 
 int calculate_resize_dimensions(uint32_t out_width, uint32_t out_height, uint32_t *resize_col_sz, uint32_t *resize_row_sz, bool *do_resize)
 {
-    size_t list_size = 2;
-    const ei_device_resize_resolutions_t list[list_size] = { {42,32}, {128,96} };
-
-    *resize_col_sz = EI_CAMERA_RAW_FRAME_BUFFER_COLS;
-    *resize_row_sz = EI_CAMERA_RAW_FRAME_BUFFER_ROWS;
-    *do_resize = false;
-
-    for (size_t ix = 0; ix < list_size; ix++) {
-        if ((out_width <= list[ix].width) && (out_height <= list[ix].height)) {
-            *resize_col_sz = list[ix].width;
-            *resize_row_sz = list[ix].height;
-            *do_resize = true;
-            break;
-        }
-    }
+    // Match EI_CLASSIFIER_RESIZE_SQUASH 1:1:
+    // Squash full VGA (640x480) directly into out_width x out_height (e.g. 96x96)
+    // without center-cropping, matching the Edge Impulse training geometry 1:1.
+    *resize_col_sz = out_width;
+    *resize_row_sz = out_height;
+    *do_resize = true;
 
     return 0;
 }
@@ -248,9 +239,15 @@ void resizeImage(int srcWidth, int srcHeight, uint8_t *srcImage, int dstWidth, i
                 src_x_accum += src_x_frac;
                 p00 = s[tx]; p10 = s[tx+1];
                 p01 = s[tx+srcWidth]; p11 = s[tx+srcWidth+1];
+        #ifdef __ARM_FEATURE_SIMD32
+                p00 = __SMLAD(p00 | (p10<<16), x_frac2, FRAC_VAL/2) >> FRAC_BITS;
+                p01 = __SMLAD(p01 | (p11<<16), x_frac2, FRAC_VAL/2) >> FRAC_BITS;
+                p00 = __SMLAD(p00 | (p01<<16), y_frac2, FRAC_VAL/2) >> FRAC_BITS;
+        #else
                 p00 = ((p00 * nx_frac) + (p10 * x_frac) + FRAC_VAL/2) >> FRAC_BITS;
                 p01 = ((p01 * nx_frac) + (p11 * x_frac) + FRAC_VAL/2) >> FRAC_BITS;
                 p00 = ((p00 * ny_frac) + (p01 * y_frac) + FRAC_VAL/2) >> FRAC_BITS;
+        #endif
                 *d++ = (uint8_t)p00;
             }
         } else {
@@ -264,6 +261,24 @@ void resizeImage(int srcWidth, int srcHeight, uint8_t *srcImage, int dstWidth, i
                 src_x_accum += src_x_frac;
                 p00 = __builtin_bswap16(s16[tx]); p10 = __builtin_bswap16(s16[tx+1]);
                 p01 = __builtin_bswap16(s16[tx+srcWidth]); p11 = __builtin_bswap16(s16[tx+srcWidth+1]);
+        #ifdef __ARM_FEATURE_SIMD32
+                {
+                p00 |= (p10 << 16);
+                p01 |= (p11 << 16);
+                r00 = (p00 & r_mask) >> 1; g00 = p00 & g_mask; b00 = p00 & b_mask;
+                r01 = (p01 & r_mask) >> 1; g01 = p01 & g_mask; b01 = p01 & b_mask;
+                r00 = __SMLAD(r00, x_frac2, FRAC_VAL/2) >> FRAC_BITS;
+                r01 = __SMLAD(r01, x_frac2, FRAC_VAL/2) >> FRAC_BITS;
+                r00 = __SMLAD(r00 | (r01<<16), y_frac2, FRAC_VAL/2) >> FRAC_BITS;
+                g00 = __SMLAD(g00, x_frac2, FRAC_VAL/2) >> FRAC_BITS;
+                g01 = __SMLAD(g01, x_frac2, FRAC_VAL/2) >> FRAC_BITS;
+                g00 = __SMLAD(g00 | (g01<<16), y_frac2, FRAC_VAL/2) >> FRAC_BITS;
+                b00 = __SMLAD(b00, x_frac2, FRAC_VAL/2) >> FRAC_BITS;
+                b01 = __SMLAD(b01, x_frac2, FRAC_VAL/2) >> FRAC_BITS;
+                b00 = __SMLAD(b00 | (b01<<16), y_frac2, FRAC_VAL/2) >> FRAC_BITS;
+                }
+        #else
+                {
                 r00 = (p00 & r_mask) >> 1; g00 = p00 & g_mask; b00 = p00 & b_mask;
                 r10 = (p10 & r_mask) >> 1; g10 = p10 & g_mask; b10 = p10 & b_mask;
                 r01 = (p01 & r_mask) >> 1; g01 = p01 & g_mask; b01 = p01 & b_mask;
@@ -277,6 +292,8 @@ void resizeImage(int srcWidth, int srcHeight, uint8_t *srcImage, int dstWidth, i
                 b00 = ((b00 * nx_frac) + (b10 * x_frac) + FRAC_VAL/2) >> FRAC_BITS;
                 b01 = ((b01 * nx_frac) + (b11 * x_frac) + FRAC_VAL/2) >> FRAC_BITS;
                 b00 = ((b00 * ny_frac) + (b01 * y_frac) + FRAC_VAL/2) >> FRAC_BITS;
+                }
+        #endif
                 r00 = (r00 << 1) & r_mask;
                 g00 = g00 & g_mask;
                 b00 = b00 & b_mask;
@@ -303,8 +320,21 @@ void cropImage(int srcWidth, int srcHeight, uint8_t *srcImage, int startX, int s
         s = &srcImage[srcWidth * (y + startY) + startX];
         d = &dstImage[(dstWidth * y)];
         x = 0;
-        for (; x<dstWidth; x++) {
-          *d++ = *s++;
+        if ((intptr_t)s & 3 || (intptr_t)d & 3) {
+          for (; x<dstWidth; x++) {
+            *d++ = *s++;
+          }
+        } else {
+          s32 = (uint32_t *)s;
+          d32 = (uint32_t *)d;
+          for (; x<dstWidth-3; x+= 4) {
+            *d32++ = *s32++;
+          }
+          s = (uint8_t *)s32;
+          d = (uint8_t *)d32;
+          for (; x<dstWidth; x++) {
+            *d++ = *s++;
+          }
         }
       }
     } else {
@@ -313,8 +343,21 @@ void cropImage(int srcWidth, int srcHeight, uint8_t *srcImage, int startX, int s
         s = (uint16_t *)&srcImage[2 * srcWidth * (y + startY) + startX * 2];
         d = (uint16_t *)&dstImage[(dstWidth * y * 2)];
         x = 0;
-        for (; x<dstWidth; x++) {
-          *d++ = *s++;
+        if ((intptr_t)s & 3 || (intptr_t)d & 3) {
+          for (; x<dstWidth; x++) {
+            *d++ = *s++;
+          }
+        } else {
+          s32 = (uint32_t *)s;
+          d32 = (uint32_t *)d;
+          for (; x<dstWidth-1; x+= 2) {
+            *d32++ = *s32++;
+          }
+          s = (uint16_t *)s32;
+          d = (uint16_t *)d32;
+          for (; x<dstWidth; x++) {
+            *d++ = *s++;
+          }
         }
       }
     }
@@ -387,9 +430,9 @@ bool OV7675::readFrame(void* buffer)
     }
 
     uint8_t* out = (uint8_t*)buffer;
-    noInterrupts();
 
-    // Falling edge indicates start of frame with timeout protection
+    // Synchronize to the start of a new frame with timeout protection
+    noInterrupts();
     uint32_t to = 5000000UL;
     while ((*vsyncPort & vsyncMask) == 0) {
         if (--to == 0) {
@@ -408,16 +451,22 @@ bool OV7675::readFrame(void* buffer)
             return false;
         }
     }
+    interrupts();
 
     int out_row = 0;
     for (int raw_height = 0; raw_height < height; raw_height += buf_rows) {
-        if (!readBuf()) {
-            interrupts();
+        // Only disable interrupts during hardware pin streaming to prevent jitter
+        noInterrupts();
+        bool read_ok = readBuf();
+        interrupts();
+
+        if (!read_ok) {
             deallocate_scratch_buffs();
             ei_printf("ERR: HREF/PCLK timeout\r\n");
             return false;
         }
 
+        // Fast Cortex-M4 SIMD Bilinear Resizing with interrupts enabled
         resizeImage(width, buf_rows,
                     raw_buf,
                     resize_col_sz, resize_height,
@@ -427,7 +476,6 @@ bool OV7675::readFrame(void* buffer)
         out_row += resize_col_sz * resize_height * bytes_per_pixel;
     }
 
-    interrupts();
     deallocate_scratch_buffs();
     return true;
 }

@@ -96,8 +96,11 @@ bool sortedActionTaken = false;
 bool cameraAvailable = false;
 
 // Proximity threshold (APDS-9960: 0 = closest, 255 = far, Lab 03 & Lab 12)
-// Threshold of 150 detects products approaching within 8-10 cm reliably
-const int PROXIMITY_THRESHOLD = 150; 
+// Threshold 40 guards against ambient room light and table reflection false-triggers
+const int PROXIMITY_THRESHOLD = 40; 
+
+// Conveyor timeout tracker at file scope
+unsigned long conveyorStartTime = 0;
 
 // ==============================================================================
 // 3. SETUP FUNCTION
@@ -163,6 +166,11 @@ void loop() {
   // Global Serial Commands for Easy Testing & Examiner Demonstrations
   if (Serial.available()) {
     char c = Serial.read();
+
+    // Ignore newline and carriage return to prevent multi-byte state cascade
+    if (c == '\r' || c == '\n') {
+      return;
+    }
     
     // Instant Target Demo: 'm' immediately sorts mouse
     if (c == 'm' || c == 'M') {
@@ -186,17 +194,19 @@ void loop() {
       return;
     }
     
-    // 's' command starts conveyor if idle, or triggers immediate snapshot if running
-    if (c == 's' || c == 'S' || c == ' ' || c == '\n' || c == '\r') {
+    // 's' or space command: Start conveyor if idle, or trigger immediate snapshot if running
+    if (c == 's' || c == 'S' || c == ' ') {
       if (currentState == STATE_IDLE) {
         Serial.println("\n[START] Conveyor Belt Running (Green LED ON)...");
         digitalWrite(LEDG, LOW);  // Green LED ON
         digitalWrite(LEDR, HIGH); // Red LED OFF
+        conveyorStartTime = millis();
         currentState = STATE_CONVEYOR_RUNNING;
-        delay(200);
+        delay(100);
         return;
       } else if (currentState == STATE_CONVEYOR_RUNNING) {
         Serial.println("\n[TRIGGER] Manual Product Arrival Triggered via Serial 's'!");
+        conveyorStartTime = 0;
         currentState = STATE_OBJECT_DETECTED;
         return;
       }
@@ -216,6 +226,7 @@ void loop() {
         digitalWrite(LEDG, LOW);          // Green LED ON (Conveyor active indicator)
         digitalWrite(LEDR, HIGH);         // Red LED OFF
         digitalWrite(LEDB, HIGH);         // Blue LED OFF
+        conveyorStartTime = millis();
         currentState = STATE_CONVEYOR_RUNNING;
         delay(200); // Prevent multi-triggering
       }
@@ -226,14 +237,14 @@ void loop() {
     // STATE 1: CONVEYOR RUNNING (Monitoring Proximity Sensor - Lab 03 & 12)
     // --------------------------------------------------------------------------
     case STATE_CONVEYOR_RUNNING: {
-      static unsigned long conveyorStartTime = 0;
       static unsigned long lastProxPrint = 0;
-      if (conveyorStartTime == 0) conveyorStartTime = millis();
+      static int proxHitCount = 0;
 
       // Conveyor auto-timeout after 30s of continuous run to prevent indefinite stall
       if (millis() - conveyorStartTime > 30000) {
         Serial.println("\n[TIMEOUT] Conveyor timed out after 30s. Resetting to IDLE.");
         conveyorStartTime = 0;
+        proxHitCount = 0;
         digitalWrite(LEDG, HIGH); // Green LED OFF
         currentState = STATE_IDLE;
         break;
@@ -244,28 +255,37 @@ void loop() {
         delay(50);
         Serial.println("\n[TRIGGER] Manual Product Arrival Triggered via Button PB1!");
         conveyorStartTime = 0;
+        proxHitCount = 0;
         currentState = STATE_OBJECT_DETECTED;
         break;
       }
 
       // Read APDS-9960 Proximity Sensor (Lecturer Lab 03 & Lab 12)
-      int proximity = APDS.readProximity();
+      if (APDS.proximityAvailable()) {
+        int proximity = APDS.readProximity();
 
-      // Stream live proximity telemetry every 350ms so user sees real-time distance
-      if (millis() - lastProxPrint > 350) {
-        lastProxPrint = millis();
-        Serial.print("  [CONVEYOR] Proximity: ");
-        Serial.print(proximity);
-        Serial.println("  (Bring mouse < 150 to scan, or press PB1 / 's')");
-      }
+        // Stream live proximity telemetry every 350ms so user sees real-time distance
+        if (millis() - lastProxPrint > 350) {
+          lastProxPrint = millis();
+          Serial.print("  [CONVEYOR] Proximity: ");
+          Serial.print(proximity);
+          Serial.println("  (Bring mouse < 40 to scan, or press PB1 / 's')");
+        }
 
-      // Proximity threshold (< 150): Detects object entering inspection zone (5-10 cm)
-      if (proximity >= 0 && proximity < PROXIMITY_THRESHOLD) {
-        Serial.print("\n[ZONE] Product Arrived! Proximity Sensor Value: ");
-        Serial.println(proximity);
-        conveyorStartTime = 0;
-        currentState = STATE_OBJECT_DETECTED;
-        break;
+        // Proximity threshold (< 40) with 2 consecutive samples to confirm true arrival
+        if (proximity >= 0 && proximity < PROXIMITY_THRESHOLD) {
+          proxHitCount++;
+          if (proxHitCount >= 2) {
+            Serial.print("\n[ZONE] Product Arrived! Proximity Sensor Value: ");
+            Serial.println(proximity);
+            proxHitCount = 0;
+            conveyorStartTime = 0;
+            currentState = STATE_OBJECT_DETECTED;
+            break;
+          }
+        } else {
+          proxHitCount = 0;
+        }
       }
 
       delay(30);
@@ -281,7 +301,7 @@ void loop() {
       digitalWrite(LEDB, HIGH); // Blue OFF
       Serial.println("[STOP] Conveyor Belt Stopped for AI Scanning (Red LED ON).");
       Serial.println("[CAMERA] Aligning OV7675 camera for Grayscale capture...");
-      delay(400); // Allow sensor auto-exposure to stabilize
+      delay(200);
       currentState = STATE_INFERENCE;
       break;
     }
@@ -311,6 +331,13 @@ void loop() {
         if (snapshot_mem != NULL) {
           snapshot_buf = (uint8_t *)DWORD_ALIGN_PTR((uintptr_t)snapshot_mem);
 
+          // Flush 5 dummy frames so OV7675 Auto-Exposure (AEC) and Auto-Gain (AGC) pipeline stabilize
+          for (int f = 0; f < 5; f++) {
+            ei_camera_capture(EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT, snapshot_buf);
+            delay(40);
+          }
+
+          // Real frame capture for neural network inference
           if (ei_camera_capture(EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT, snapshot_buf)) {
             ei::signal_t signal;
             signal.total_length = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT;

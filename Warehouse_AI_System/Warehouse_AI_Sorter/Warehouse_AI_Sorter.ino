@@ -9,7 +9,7 @@
   Assignment Control Sequence & Requirements:
   ----------------------------------------------------------------------------
   1. Edge Impulse Object Detection Model (Mouse vs Background).
-  2. Microcontroller inferencing with high accuracy (Deployment Version 5, EON).
+  2. Microcontroller inferencing with high accuracy (Deployment Version 7, EON int8, 93.94% Val Acc).
   3. Push button starts system -> LED lights up (Green) indicating conveyor running.
   4. While running, APDS-9960 proximity sensor monitors for approaching object.
   5. Object detected in zone (< 150) -> Conveyor stops (Red LED), AI scan activates.

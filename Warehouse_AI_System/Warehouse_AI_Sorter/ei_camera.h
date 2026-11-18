@@ -121,10 +121,11 @@ bool ei_camera_init(void) {
     digitalWrite(12, HIGH);
     delay(50); // Allow camera power rail and internal clock to stabilize
 
-    if (!Cam.begin(QQVGA, RGB565, 1)) {
+    if (!Cam.begin(QQVGA, RGB565, 5)) { // Changed from 1 to 5 FPS to allow AEC/AWB to adapt rapidly
         ei_printf("ERR: Failed to initialize camera\r\n");
         return false;
     }
+    delay(1500); // Allow Auto-Exposure and White-Balance to stabilize
     is_initialised = true;
 
     return true;
@@ -365,7 +366,8 @@ int OV7675::allocate_scratch_buffs()
     buf_rows = height / resize_row_sz * resize_height;
     buf_size = bytes_per_row * buf_rows;
 
-    buf_mem = ei_malloc(buf_size);
+    // Pad allocation by bytes_per_row + 4 to prevent DWORD_ALIGN_PTR overflow and bilinear overread
+    buf_mem = ei_malloc(buf_size + bytes_per_row + 4);
     if(buf_mem == NULL) {
         ei_printf("failed to create buf_mem\r\n");
         return false;

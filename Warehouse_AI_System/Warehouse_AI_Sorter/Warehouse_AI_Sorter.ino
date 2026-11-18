@@ -99,10 +99,11 @@ void setup() {
   mySerial.begin(9600);
 
   // Initialize Sensors & Actuators
-  // Carrier onboard button PB1 (Pin 13) setup with hardware bias
+  // Initialize Push Buttons: Carrier PB1 (Pin 13) and Grove J2 (Pin 11)
   pinMode(BUTTON_CARRIER, OUTPUT);
   digitalWrite(BUTTON_CARRIER, HIGH);
   nrf_gpio_cfg_out_with_input(digitalPinToPinName(BUTTON_CARRIER));
+  pinMode(BUTTON_GROVE, INPUT_PULLUP);
 
   pinMode(LEDR, OUTPUT);
   pinMode(LEDG, OUTPUT);
@@ -154,8 +155,8 @@ void loop() {
     // STATE 0: IDLE (Waiting for operator to press Start Button)
     // --------------------------------------------------------------------------
     case STATE_IDLE: {
-      // Check Carrier Onboard Button PB1 (Pin 13)
-      bool buttonPressed = (digitalRead(BUTTON_CARRIER) == LOW);
+      // Check both Carrier Onboard Button (Pin 13) and Grove Port J2 Button (Pin 11)
+      bool buttonPressed = (digitalRead(BUTTON_CARRIER) == LOW) || (digitalRead(BUTTON_GROVE) == LOW);
 
       // Also allow pressing 's' or Enter in Arduino Serial Monitor to start
       if (Serial.available()) {
@@ -194,6 +195,30 @@ void loop() {
         break;
       }
       
+      // Check if operator pressed push button or typed 's' to manually trigger scan
+      if ((digitalRead(BUTTON_CARRIER) == LOW) || (digitalRead(BUTTON_GROVE) == LOW)) {
+        delay(50);
+        closeDetectionCount = 0;
+        conveyorStartTime = 0;
+        Serial.println("\n[TRIGGER] Manual Product Arrival Triggered via Push Button!");
+        digitalWrite(LEDG, HIGH);
+        digitalWrite(LEDR, LOW);
+        currentState = STATE_OBJECT_DETECTED;
+        break;
+      }
+      if (Serial.available()) {
+        char c = Serial.read();
+        if (c == 's' || c == 'S' || c == ' ' || c == '\n' || c == '\r') {
+          closeDetectionCount = 0;
+          conveyorStartTime = 0;
+          Serial.println("\n[TRIGGER] Manual Product Arrival Triggered via Serial 's'!");
+          digitalWrite(LEDG, HIGH);
+          digitalWrite(LEDR, LOW);
+          currentState = STATE_OBJECT_DETECTED;
+          break;
+        }
+      }
+
       // Check for approaching product via Proximity Sensor
       if (APDS.proximityAvailable()) {
         int proximity = APDS.readProximity();
@@ -350,6 +375,11 @@ void loop() {
     // --------------------------------------------------------------------------
     case STATE_SORTING_ACTION: {
       if (detectedProduct == "mouse" && confidenceScore >= 70) {
+        // Target Identified: Solid Green LED ON!
+        digitalWrite(LEDR, HIGH);
+        digitalWrite(LEDG, LOW);
+        digitalWrite(LEDB, HIGH);
+
         Serial.println(">>> TARGET PRODUCT IDENTIFIED (MOUSE)! <<<");
         Serial.println("[SERVO] Dynamically attaching servo & actuating to 180 DEGREES...");
         myServo.attach(SERVO_PIN);
@@ -367,6 +397,11 @@ void loop() {
         digitalWrite(SERVO_PIN, HIGH); // Re-assert camera power enable
         sortedActionTaken = true;
       } else {
+        // Non-target / Background: Solid Red LED ON!
+        digitalWrite(LEDR, LOW);
+        digitalWrite(LEDG, HIGH);
+        digitalWrite(LEDB, HIGH);
+
         Serial.print("[IGNORE] Non-target or Background detected: '");
         Serial.print(detectedProduct);
         Serial.print("' (Confidence: ");

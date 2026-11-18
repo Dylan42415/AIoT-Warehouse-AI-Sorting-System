@@ -152,13 +152,7 @@ int calculate_resize_dimensions(uint32_t out_width, uint32_t out_height, uint32_
 bool ei_camera_init(void) {
     if (is_initialised) return true;
 
-    // Carrier Pin 11 = Camera PDN (Power Down), Pin 12 = Camera PEN (Power Enable / Reset)
-    // Drive PDN LOW (0V) to wake sensor from sleep; drive PEN HIGH (3.3V) to enable module power
-    pinMode(11, OUTPUT);
-    digitalWrite(11, LOW);
-    pinMode(12, OUTPUT);
-    digitalWrite(12, HIGH);
-    delay(50); // Allow camera power rail and internal clock to stabilize
+    delay(50); // Allow camera internal clock to stabilize
 
     if (!Cam.begin(QQVGA, RGB565, 1)) { // VGA downsampled to QQVGA (OV7675)
         ei_printf("ERR: Failed to initialize camera\r\n");

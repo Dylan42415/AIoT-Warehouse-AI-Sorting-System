@@ -156,7 +156,7 @@ void loop() {
     // --------------------------------------------------------------------------
     case STATE_IDLE: {
       // Check both Carrier Onboard Button (Pin 13) and Grove Port J2 Button (Pin 11)
-      bool buttonPressed = (digitalRead(BUTTON_CARRIER) == LOW) || (digitalRead(BUTTON_GROVE) == LOW);
+      bool buttonPressed = (digitalRead(BUTTON_GROVE) == LOW);
 
       // Also allow pressing 's' or Enter in Arduino Serial Monitor to start
       if (Serial.available()) {
@@ -196,7 +196,7 @@ void loop() {
       }
       
       // Check if operator pressed push button or typed 's' to manually trigger scan
-      if ((digitalRead(BUTTON_CARRIER) == LOW) || (digitalRead(BUTTON_GROVE) == LOW)) {
+      if (digitalRead(BUTTON_GROVE) == LOW) {
         delay(50);
         closeDetectionCount = 0;
         conveyorStartTime = 0;

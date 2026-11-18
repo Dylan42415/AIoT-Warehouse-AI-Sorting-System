@@ -85,8 +85,8 @@ bool sortedActionTaken = false;
 bool cameraAvailable = false;
 
 // Proximity threshold (APDS-9960: 0 = closest, 255 = far)
-// Strict threshold of 40 prevents false triggers from ambient overhead/ceiling IR lighting
-const int PROXIMITY_THRESHOLD = 40; 
+// Threshold of 100 triggers reliably when object is 5-8cm away, while ignoring open ceiling/ambient light
+const int PROXIMITY_THRESHOLD = 100; 
 
 // ==============================================================================
 // 3. SETUP FUNCTION
@@ -183,6 +183,7 @@ void loop() {
     case STATE_CONVEYOR_RUNNING: {
       static int closeDetectionCount = 0;
       static unsigned long conveyorStartTime = 0;
+      static unsigned long lastProxFeedback = 0;
       if (conveyorStartTime == 0) conveyorStartTime = millis();
 
       // Conveyor auto-timeout after 25s of continuous run to prevent indefinite stall
@@ -193,12 +194,36 @@ void loop() {
         currentState = STATE_IDLE;
         break;
       }
+
+      // Check for manual trigger (pressing button or sending 's' in serial to scan immediately)
+      bool manualTrigger = (digitalRead(BUTTON_CARRIER) == LOW);
+      if (Serial.available()) {
+        char c = Serial.read();
+        if (c == 's' || c == 'S' || c == ' ' || c == '\n' || c == '\r' || c == 'm' || c == 'b') {
+          manualTrigger = true;
+        }
+      }
+      if (manualTrigger) {
+        delay(50);
+        Serial.println("[TRIGGER] Manual Product Arrival Triggered!");
+        conveyorStartTime = 0;
+        currentState = STATE_OBJECT_DETECTED;
+        break;
+      }
       
       // Check for approaching product via Proximity Sensor
       if (APDS.proximityAvailable()) {
         int proximity = APDS.readProximity();
+
+        // Print live feedback once every second so operator can see proximity value
+        if (millis() - lastProxFeedback > 1000) {
+          lastProxFeedback = millis();
+          Serial.print("  [CONVEYOR] Running... Sensor Reading: ");
+          Serial.print(proximity);
+          Serial.println(" (Move object closer < 100, or type 's' to scan now)");
+        }
         
-        // Strict threshold check (< 40) with consecutive sample confirmation
+        // Threshold check (< 100) with consecutive sample confirmation
         if (proximity >= 0 && proximity < PROXIMITY_THRESHOLD) {
           closeDetectionCount++;
           if (closeDetectionCount >= 2) { // Requires 2 consecutive readings (~200ms)
@@ -206,13 +231,8 @@ void loop() {
             conveyorStartTime = 0;
             Serial.print("[ZONE] Product Confirmed! Proximity Value: ");
             Serial.println(proximity);
-            
-            // Stop conveyor belt (Green OFF, Red inspection LED turns ON)
-            digitalWrite(LEDG, HIGH); // Green OFF (Conveyor stopped)
-            digitalWrite(LEDR, LOW);  // Red ON (Inspection zone active)
-            Serial.println("[STOP] Conveyor Belt Stopped for AI Scanning.");
-            
             currentState = STATE_OBJECT_DETECTED;
+            break;
           }
         } else {
           closeDetectionCount = 0;
@@ -226,6 +246,9 @@ void loop() {
     // STATE 2: OBJECT DETECTED (Prepare Camera & Lighting)
     // --------------------------------------------------------------------------
     case STATE_OBJECT_DETECTED: {
+      digitalWrite(LEDG, HIGH); // Green OFF (Conveyor stopped)
+      digitalWrite(LEDR, LOW);  // Red ON (Inspection zone active)
+      Serial.println("[STOP] Conveyor Belt Stopped for AI Scanning.");
       Serial.println("[CAMERA] Aligning sensor & preparing Grayscale image capture...");
       delay(400); // Allow sensor auto-exposure to stabilize
       currentState = STATE_INFERENCE;

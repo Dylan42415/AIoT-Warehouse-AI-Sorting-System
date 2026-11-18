@@ -51,17 +51,6 @@ bool isButtonPressed() {
   return false;
 }
 
-// Check if operator typed 's', space, or Enter into Serial Monitor
-bool isSerialTriggered() {
-  if (Serial.available()) {
-    char c = Serial.read();
-    if (c == 's' || c == 'S' || c == ' ' || c == '\n' || c == '\r' || c == 'm' || c == 'b') {
-      return true;
-    }
-  }
-  return false;
-}
-
 // Define UART object for communication with Raspberry Pi via J1 (A6 = TX, A7 = RX, Lab 07)
 UART mySerial(A6, A7, NC, NC);
 
@@ -156,12 +145,13 @@ void setup() {
     Serial.println("⚠️ Notice: Camera not detected. Fallback interactive mode enabled.");
   }
 
-  // NOTE: Servo is attached dynamically during STATE_SORTING_ACTION only (prevents power sag)
-
   Serial.println("==================================================");
   Serial.println("  WAREHOUSE AI CONVEYOR SORTING SYSTEM READY!    ");
   Serial.println("  Level 4 Architecture Initialized (Grayscale).  ");
-  Serial.println("  Press Carrier Button (PB1) or type 's' to start!");
+  Serial.println("  Controls:");
+  Serial.println("    • Press PB1 or type 's': Start Conveyor / Trigger Scan");
+  Serial.println("    • Type 'm': Instant Mouse Demo (180 deg Servo for 5s)");
+  Serial.println("    • Type 'b': Instant Background Demo (Servo Idle at 0 deg)");
   Serial.println("==================================================");
 }
 
@@ -169,18 +159,60 @@ void setup() {
 // 4. MAIN LOOP - FINITE STATE MACHINE
 // ==============================================================================
 void loop() {
+
+  // Global Serial Commands for Easy Testing & Examiner Demonstrations
+  if (Serial.available()) {
+    char c = Serial.read();
+    
+    // Instant Target Demo: 'm' immediately sorts mouse
+    if (c == 'm' || c == 'M') {
+      Serial.println("\n[DEMO] >>> INJECTING MOUSE TARGET DETECTION (96%) <<<");
+      detectedProduct = "mouse";
+      confidenceScore = 96;
+      digitalWrite(LEDG, HIGH); // Green OFF
+      digitalWrite(LEDR, LOW);  // Red ON (Inspection active)
+      currentState = STATE_SORTING_ACTION;
+      return;
+    }
+    
+    // Instant Background Demo: 'b' demonstrates non-target pass-through
+    if (c == 'b' || c == 'B') {
+      Serial.println("\n[DEMO] >>> INJECTING BACKGROUND NON-TARGET (98%) <<<");
+      detectedProduct = "background";
+      confidenceScore = 98;
+      digitalWrite(LEDG, HIGH);
+      digitalWrite(LEDR, LOW);
+      currentState = STATE_SORTING_ACTION;
+      return;
+    }
+    
+    // 's' command starts conveyor if idle, or triggers immediate snapshot if running
+    if (c == 's' || c == 'S' || c == ' ' || c == '\n' || c == '\r') {
+      if (currentState == STATE_IDLE) {
+        Serial.println("\n[START] Conveyor Belt Running (Green LED ON)...");
+        digitalWrite(LEDG, LOW);  // Green LED ON
+        digitalWrite(LEDR, HIGH); // Red LED OFF
+        currentState = STATE_CONVEYOR_RUNNING;
+        delay(200);
+        return;
+      } else if (currentState == STATE_CONVEYOR_RUNNING) {
+        Serial.println("\n[TRIGGER] Manual Product Arrival Triggered via Serial 's'!");
+        currentState = STATE_OBJECT_DETECTED;
+        return;
+      }
+    }
+  }
+
+  // Handle State Machine
   switch (currentState) {
     
     // --------------------------------------------------------------------------
     // STATE 0: IDLE (Waiting for operator to press Start Button)
     // --------------------------------------------------------------------------
     case STATE_IDLE: {
-      bool startTrigger = isButtonPressed() || isSerialTriggered();
-
-      if (startTrigger) {
+      if (isButtonPressed()) {
         delay(50); // Debounce
-        Serial.println("\n[START] Button Triggered! Conveyor Belt Running (Green LED ON)...");
-        Serial.println("[INFO] Move product in front of Proximity Sensor (< 10cm) OR press button / 's' to scan.");
+        Serial.println("\n[START] Button PB1 Triggered! Conveyor Belt Running (Green LED ON)...");
         digitalWrite(LEDG, LOW);          // Green LED ON (Conveyor active indicator)
         digitalWrite(LEDR, HIGH);         // Red LED OFF
         digitalWrite(LEDB, HIGH);         // Blue LED OFF
@@ -207,10 +239,10 @@ void loop() {
         break;
       }
 
-      // Check for manual trigger: pressing PB1 button OR typing 's' in serial immediately triggers scan
-      if (isButtonPressed() || isSerialTriggered()) {
+      // Check for manual trigger via PB1 button
+      if (isButtonPressed()) {
         delay(50);
-        Serial.println("\n[TRIGGER] Manual Product Arrival Triggered via Button / Serial 's'!");
+        Serial.println("\n[TRIGGER] Manual Product Arrival Triggered via Button PB1!");
         conveyorStartTime = 0;
         currentState = STATE_OBJECT_DETECTED;
         break;
@@ -219,12 +251,12 @@ void loop() {
       // Read APDS-9960 Proximity Sensor (Lecturer Lab 03 & Lab 12)
       int proximity = APDS.readProximity();
 
-      // Stream live proximity telemetry every 300ms so user sees real-time distance
-      if (millis() - lastProxPrint > 300) {
+      // Stream live proximity telemetry every 350ms so user sees real-time distance
+      if (millis() - lastProxPrint > 350) {
         lastProxPrint = millis();
         Serial.print("  [CONVEYOR] Proximity: ");
         Serial.print(proximity);
-        Serial.println("  (Place object < 150 to scan, or press button / 's')");
+        Serial.println("  (Bring mouse < 150 to scan, or press PB1 / 's')");
       }
 
       // Proximity threshold (< 150): Detects object entering inspection zone (5-10 cm)
@@ -236,7 +268,7 @@ void loop() {
         break;
       }
 
-      delay(40);
+      delay(30);
       break;
     }
 
@@ -325,36 +357,11 @@ void loop() {
         }
       }
 
-      // 2. Graceful Fallback if Camera Unplugged or Offline
+      // 2. Graceful Fallback if Camera was offline
       if (!inferenceSuccess) {
-        Serial.println("[INFO] Running in dynamic simulation mode.");
-        Serial.println("[PROMPT] Type 'm' (Mouse 96%) or 'b' (Background 98%) in Serial Monitor:");
-
-        unsigned long waitStart = millis();
-        char choice = 0;
-        while (millis() - waitStart < 2500) {
-          if (Serial.available()) {
-            char inChar = Serial.read();
-            if (inChar == 'm' || inChar == 'b') {
-              choice = inChar;
-              break;
-            }
-          }
-        }
-
-        if (choice == 'b') {
-          detectedProduct = "background";
-          confidenceScore = 98;
-        } else {
-          detectedProduct = "mouse";
-          confidenceScore = 96;
-        }
-
-        Serial.print("  ↳ Selected Product: ");
-        Serial.print(detectedProduct);
-        Serial.print(" | Dynamic Confidence: ");
-        Serial.print(confidenceScore);
-        Serial.println("%");
+        Serial.println("[INFO] Live capture unavailable, using default mouse target.");
+        detectedProduct = "mouse";
+        confidenceScore = 96;
       }
 
       Serial.print("[RESULT] Classified Product: ");

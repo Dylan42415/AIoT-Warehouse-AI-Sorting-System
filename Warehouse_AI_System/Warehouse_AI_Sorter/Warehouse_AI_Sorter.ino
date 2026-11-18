@@ -43,6 +43,32 @@ void nrf_gpio_cfg_out_with_input(uint32_t pin_number) {
     NRF_GPIO_PIN_NOSENSE);
 }
 
+// Robust edge-detect debounced reader for on-carrier push button PB1 (Pin 13)
+bool isButtonPressed() {
+  static unsigned long lastDebounceTime = 0;
+  static bool lastButtonState = HIGH;
+  static bool buttonState = HIGH;
+
+  bool buttonRead = nrf_gpio_pin_read(digitalPinToPinName(BUTTON_CARRIER));
+
+  if (buttonRead != lastButtonState) {
+    lastDebounceTime = millis();
+  }
+
+  if (millis() - lastDebounceTime >= 50) {
+    if (buttonRead != buttonState) {
+      buttonState = buttonRead;
+      if (!buttonState) {
+        lastButtonState = buttonRead;
+        return true; // Click registered on falling edge (HIGH -> LOW)
+      }
+    }
+  }
+
+  lastButtonState = buttonRead;
+  return false;
+}
+
 // Define UART object for communication with Raspberry Pi via J1 (A6 = TX, A7 = RX)
 UART mySerial(A6, A7, NC, NC);
 
@@ -99,11 +125,10 @@ void setup() {
   mySerial.begin(9600);
 
   // Initialize Sensors & Actuators
-  // Initialize Push Buttons: Carrier PB1 (Pin 13) and Grove J2 (Pin 11)
+  // Initialize Push Button: Carrier onboard PB1 (Pin 13) using Harvard TinyMLShield configuration
   pinMode(BUTTON_CARRIER, OUTPUT);
   digitalWrite(BUTTON_CARRIER, HIGH);
   nrf_gpio_cfg_out_with_input(digitalPinToPinName(BUTTON_CARRIER));
-  pinMode(BUTTON_GROVE, INPUT_PULLUP);
 
   pinMode(LEDR, OUTPUT);
   pinMode(LEDG, OUTPUT);
@@ -155,8 +180,7 @@ void loop() {
     // STATE 0: IDLE (Waiting for operator to press Start Button)
     // --------------------------------------------------------------------------
     case STATE_IDLE: {
-      // Check both Carrier Onboard Button (Pin 13) and Grove Port J2 Button (Pin 11)
-      bool buttonPressed = (digitalRead(BUTTON_GROVE) == LOW);
+      bool buttonPressed = isButtonPressed();
 
       // Also allow pressing 's' or Enter in Arduino Serial Monitor to start
       if (Serial.available()) {
@@ -167,8 +191,7 @@ void loop() {
       }
 
       if (buttonPressed) {
-        delay(50); // Debounce
-        Serial.println("\n[START] Button Triggered! Conveyor Belt Running...");
+        Serial.println("\n[START] Push Button (PB1) Triggered! Conveyor Belt Running...");
         digitalWrite(LEDG, LOW);          // Green LED ON (Conveyor active indicator)
         digitalWrite(LEDR, HIGH);         // Red LED OFF
         digitalWrite(LEDB, HIGH);         // Blue LED OFF
@@ -196,11 +219,10 @@ void loop() {
       }
       
       // Check if operator pressed push button or typed 's' to manually trigger scan
-      if (digitalRead(BUTTON_GROVE) == LOW) {
-        delay(50);
+      if (isButtonPressed()) {
         closeDetectionCount = 0;
         conveyorStartTime = 0;
-        Serial.println("\n[TRIGGER] Manual Product Arrival Triggered via Push Button!");
+        Serial.println("\n[TRIGGER] Manual Product Arrival Triggered via Push Button (PB1)!");
         digitalWrite(LEDG, HIGH);
         digitalWrite(LEDR, LOW);
         currentState = STATE_OBJECT_DETECTED;

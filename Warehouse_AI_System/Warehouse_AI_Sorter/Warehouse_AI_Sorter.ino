@@ -296,6 +296,20 @@ void loop() {
             if (ei_error == EI_IMPULSE_OK) {
               inferenceSuccess = true;
 
+              // Telemetry: check average frame exposure to diagnose lighting
+              uint32_t totalPixels = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT;
+              uint32_t lumaSum = 0;
+              for (uint32_t i = 0; i < totalPixels; i++) {
+                uint16_t px = (snapshot_buf[i*2] << 8) | snapshot_buf[i*2 + 1];
+                uint8_t r = ((px >> 11) & 0x1f) << 3;
+                uint8_t g = ((px >> 5) & 0x3f) << 2;
+                uint8_t b = (px & 0x1f) << 3;
+                lumaSum += (r * 299UL + g * 587UL + b * 114UL) / 1000UL;
+              }
+              Serial.print("[CAMERA] Frame Exposure: ");
+              Serial.print(lumaSum / totalPixels);
+              Serial.println(" / 255");
+
               Serial.println("[TINYML] Live Classification Probabilities:");
               float maxScore = 0.0f;
               int maxIdx = -1;

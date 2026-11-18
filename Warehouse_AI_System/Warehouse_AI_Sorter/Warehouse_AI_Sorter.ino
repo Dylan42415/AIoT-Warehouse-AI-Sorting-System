@@ -102,6 +102,15 @@ bool isSerialTriggered() {
   return false;
 }
 
+// Helper function to convert RGB565 to Grayscale Luma (0-255) for live ASCII preview
+static inline uint8_t rgb565ToLuma(uint8_t msb, uint8_t lsb) {
+  uint16_t pixel = (msb << 8) | lsb;
+  uint8_t r = ((pixel >> 11) & 0x1f) << 3;
+  uint8_t g = ((pixel >> 5) & 0x3f) << 2;
+  uint8_t b = (pixel & 0x1f) << 3;
+  return (uint8_t)((r * 299UL + g * 587UL + b * 114UL) / 1000UL);
+}
+
 // ==============================================================================
 // 2. FINITE STATE MACHINE (FSM)
 // ==============================================================================
@@ -286,6 +295,21 @@ void loop() {
           snapshot_buf = (uint8_t *)DWORD_ALIGN_PTR((uintptr_t)snapshot_mem);
 
           if (ei_camera_capture(EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT, snapshot_buf)) {
+            // Live 24x24 ASCII camera view: allows user to see exactly what the lens sees
+            const char *asciiRamp = " .:-=+*#%@";
+            Serial.println("\n  +------------------------+ (24x24 Camera Frame View)");
+            for (uint32_t y = 0; y < EI_CLASSIFIER_INPUT_HEIGHT; y += 4) {
+              Serial.print("  |");
+              for (uint32_t x = 0; x < EI_CLASSIFIER_INPUT_WIDTH; x += 4) {
+                uint32_t idx = (y * EI_CLASSIFIER_INPUT_WIDTH + x) * 2;
+                uint8_t luma = rgb565ToLuma(snapshot_buf[idx], snapshot_buf[idx + 1]);
+                uint8_t rampIdx = (uint8_t)((luma * 9UL) / 255UL);
+                Serial.print(asciiRamp[rampIdx]);
+              }
+              Serial.println("|");
+            }
+            Serial.println("  +------------------------+");
+
             ei::signal_t signal;
             signal.total_length = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT;
             signal.get_data = &ei_camera_cutout_get_data;

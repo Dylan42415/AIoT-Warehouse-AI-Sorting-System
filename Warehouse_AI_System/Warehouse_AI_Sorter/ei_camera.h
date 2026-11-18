@@ -549,7 +549,7 @@ int OV7675::deallocate_scratch_buffs()
     return 0;
 }
 
-#define CAMERA_SIGNAL_TIMEOUT 100000UL
+#define CAMERA_SIGNAL_TIMEOUT 2000000UL
 
 //
 // OV7675::readFrame()

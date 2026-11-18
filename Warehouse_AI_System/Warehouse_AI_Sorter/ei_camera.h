@@ -115,8 +115,9 @@ int calculate_resize_dimensions(uint32_t out_width, uint32_t out_height, uint32_
 bool ei_camera_init(void) {
     if (is_initialised) return true;
 
-    if (!Cam.begin(QQVGA, RGB565, 15)) {
-        ei_printf("ERR: Failed to initialize camera at 15 fps\r\n");
+    // Supported FPS on Nano 33 BLE in Arduino_OV767X library: 1 or 5
+    if (!Cam.begin(QQVGA, RGB565, 5)) {
+        ei_printf("ERR: Failed to initialize camera at 5 fps\r\n");
         return false;
     }
     is_initialised = true;

@@ -514,11 +514,11 @@ void loop() {
         }
       }
 
-      // 2. Graceful Fallback if Camera was offline
+      // 2. Safe Fallback if Live Capture Failed: Do NOT false-trigger servo
       if (!inferenceSuccess) {
-        Serial.println("[INFO] Live capture unavailable, using default mouse target.");
-        detectedProduct = "mouse";
-        confidenceScore = 96;
+        Serial.println("[WARN] Live capture unavailable. Non-target assumed (motor remains idle).");
+        detectedProduct = "background";
+        confidenceScore = 0;
       }
 
       Serial.print("[RESULT] Classified Product: ");

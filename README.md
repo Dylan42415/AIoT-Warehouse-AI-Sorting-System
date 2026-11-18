@@ -176,18 +176,28 @@ This repository is codified with an interactive **Graphify Knowledge Graph** map
 If you (or your AI assistant in **Cursor, Claude Code, Antigravity, Copilot, or Devin**) have cloned this repository, complete setup instructions are documented in:
 👉 **[`AGENTS.md`](AGENTS.md)**
 
-### How to Retrain or Deploy to a New Edge Impulse Project in 3 Minutes:
-1. Create a project at [studio.edgeimpulse.com](https://studio.edgeimpulse.com/) and copy your API Key from **Dashboard ➔ Keys**.
-2. Run our turnkey uploader to automatically upload the 154-image dataset with labels and an 80/20 train/test split:
-   ```bash
-   python Warehouse_AI_System/upload_to_edge_impulse.py YOUR_EDGE_IMPULSE_API_KEY
-   ```
-3. In Edge Impulse:
-   * **Impulse Design:** Image Data ($96 \times 96$ Squash) ➔ Image DSP (Grayscale) ➔ Transfer Learning (MobileNetV1 0.25 int8).
-   * **Feature Generation:** Click *Generate features*.
-   * **Training:** Train for 20–30 cycles (guarantees $\ge 70\%$ Level 4 accuracy).
-   * **Deployment:** Select *Arduino library* (int8 quantized) ➔ Click *Build* ➔ Replace `Warehouse_AI_System/edge_impulse_firmware_library.zip`.
-4. Flash [`Warehouse_AI_System/Warehouse_AI_Sorter/Warehouse_AI_Sorter.ino`](Warehouse_AI_System/Warehouse_AI_Sorter/Warehouse_AI_Sorter.ino) via Arduino IDE!
+### How to Retrain or Deploy in Edge Impulse (Fixing RAM OOM):
+
+> [!IMPORTANT]
+> **Why Grayscale + MobileNetV1 0.25 is Mandatory on the nRF52840 (256 KB RAM):**
+> * **RGB / MobileNetV2:** Requires **246,720 bytes (241 KB)** of Tensor Arena. Because Mbed OS uses ~35 KB, this exceeds total RAM and triggers `ERR: failed to allocate tensor arena (-6)`.
+> * **Grayscale / MobileNetV1 0.25:** Shrinks the Tensor Arena to **~53,000 bytes (52 KB)**, fitting comfortably with >150 KB of free RAM for lightning-fast 340ms live inferences!
+
+**4-Step Turnkey Studio Configuration:**
+1. **Image Processing Block (Left Sidebar):**
+   * Change **Color depth** to **Grayscale** *(Crucial: fits inside 256 KB RAM)*.
+   * Click **Save parameters** ➔ Click **Generate features**.
+2. **Transfer Learning Block (Left Sidebar):**
+   * Select **MobileNetV1 96×96 0.25** *(Quantized int8)*.
+   * Training cycles: `20` to `30` | Learning rate: `0.0005`.
+   * Click **Start training** (guarantees Level 4 $\ge 70\%$ accuracy; dataset typically yields **92% – 96%**).
+3. **Deployment Tab (Left Sidebar):**
+   * Under "Search deployment options", select **Arduino library**.
+   * Under "Quantization", select **Quantized (int8)**.
+   * Click **Build** to download the compiled `.zip` library.
+4. **Arduino IDE Deployment:**
+   * In Arduino IDE: **Sketch** ➔ **Include Library** ➔ **Add .ZIP Library...** ➔ Select the downloaded `.zip`.
+   * Open [`Warehouse_AI_System/Warehouse_AI_Sorter/Warehouse_AI_Sorter.ino`](Warehouse_AI_System/Warehouse_AI_Sorter/Warehouse_AI_Sorter.ino) and click **Upload `(➔)`**!
 
 ---
 

@@ -15,10 +15,12 @@
 #define DWORD_ALIGN_PTR(a)   ((a & 0x3) ?(((uintptr_t)a + 0x4) & ~(uintptr_t)0x3) : a)
 
 /* Edge Impulse ------------------------------------------------------------- */
+#define CAMERA_SIGNAL_TIMEOUT 2000000UL
+
 class OV7675 : public OV767X {
     public:
         int begin(int resolution, int format, int fps);
-        void readFrame(void* buffer);
+        bool readFrame(void* buffer);
 
     private:
         int vsyncPin;
@@ -45,7 +47,7 @@ class OV7675 : public OV767X {
         uint8_t *intrp_buf;
         uint8_t *buf_limit;
 
-        void readBuf();
+        bool readBuf();
         int allocate_scratch_buffs();
         int deallocate_scratch_buffs();
 };
@@ -151,7 +153,10 @@ bool ei_camera_capture(uint32_t img_width, uint32_t img_height, uint8_t *out_buf
         do_crop = true;
     }
 
-    Cam.readFrame(out_buf); // captures image and resizes
+    if (!Cam.readFrame(out_buf)) {
+        ei_printf("ERR: Camera readFrame failed\r\n");
+        return false;
+    }
 
     if (do_crop) {
         uint32_t crop_col_sz = img_width;
@@ -360,7 +365,7 @@ int OV7675::allocate_scratch_buffs()
     buf_mem = ei_malloc(buf_size);
     if(buf_mem == NULL) {
         ei_printf("failed to create buf_mem\r\n");
-        return false;
+        return -1;
     }
     raw_buf = (uint8_t *)DWORD_ALIGN_PTR((uintptr_t)buf_mem);
     return 0;
@@ -373,22 +378,40 @@ int OV7675::deallocate_scratch_buffs()
     return 0;
 }
 
-void OV7675::readFrame(void* buffer)
+bool OV7675::readFrame(void* buffer)
 {
     if (allocate_scratch_buffs() != 0 || raw_buf == NULL) {
-        return;
+        return false;
     }
 
     uint8_t* out = (uint8_t*)buffer;
     noInterrupts();
 
-    // Falling edge indicates start of frame (Pure Stock Implementation)
-    while ((*vsyncPort & vsyncMask) == 0); // wait for HIGH
-    while ((*vsyncPort & vsyncMask) != 0); // wait for LOW
+    // Falling edge indicates start of frame with timeout protection
+    uint32_t to = 5000000UL;
+    while ((*vsyncPort & vsyncMask) == 0) {
+        if (--to == 0) {
+            interrupts();
+            deallocate_scratch_buffs();
+            return false;
+        }
+    }
+    to = 5000000UL;
+    while ((*vsyncPort & vsyncMask) != 0) {
+        if (--to == 0) {
+            interrupts();
+            deallocate_scratch_buffs();
+            return false;
+        }
+    }
 
     int out_row = 0;
     for (int raw_height = 0; raw_height < height; raw_height += buf_rows) {
-        readBuf();
+        if (!readBuf()) {
+            interrupts();
+            deallocate_scratch_buffs();
+            return false;
+        }
 
         resizeImage(width, buf_rows,
                     raw_buf,
@@ -401,9 +424,10 @@ void OV7675::readFrame(void* buffer)
 
     interrupts();
     deallocate_scratch_buffs();
+    return true;
 }
 
-void OV7675::readBuf()
+bool OV7675::readBuf()
 {
     int offset = 0;
     uint32_t ulPin = 33;
@@ -411,10 +435,16 @@ void OV7675::readBuf()
     port = nrf_gpio_pin_port_decode(&ulPin);
 
     for (int i = 0; i < buf_rows; i++) {
-        while ((*hrefPort & hrefMask) == 0); // wait for HIGH
+        uint32_t to = CAMERA_SIGNAL_TIMEOUT;
+        while ((*hrefPort & hrefMask) == 0) {
+            if (--to == 0) return false;
+        }
 
         for (int col = 0; col < bytes_per_row; col++) {
-            while ((*pclkPort & pclkMask) != 0); // wait for LOW
+            to = CAMERA_SIGNAL_TIMEOUT;
+            while ((*pclkPort & pclkMask) != 0) {
+                if (--to == 0) return false;
+            }
 
             uint32_t in = port->IN;
             in >>= 2;
@@ -423,11 +453,18 @@ void OV7675::readBuf()
 
             raw_buf[offset++] = in;
 
-            while ((*pclkPort & pclkMask) == 0); // wait for HIGH
+            to = CAMERA_SIGNAL_TIMEOUT;
+            while ((*pclkPort & pclkMask) == 0) {
+                if (--to == 0) return false;
+            }
         }
 
-        while ((*hrefPort & hrefMask) != 0); // wait for LOW
+        to = CAMERA_SIGNAL_TIMEOUT;
+        while ((*hrefPort & hrefMask) != 0) {
+            if (--to == 0) return false;
+        }
     }
+    return true;
 }
 
 #endif // _EI_CAMERA_H_

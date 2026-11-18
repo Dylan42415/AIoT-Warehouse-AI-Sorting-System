@@ -94,6 +94,7 @@ String detectedProduct = "none";
 int confidenceScore = 0;
 bool sortedActionTaken = false;
 bool cameraAvailable = false;
+bool calibrationMode = false;
 
 // Proximity threshold (APDS-9960: 0 = closest, 255 = far, Lab 03 & Lab 12)
 // Threshold 40 guards against ambient room light and table reflection false-triggers
@@ -101,6 +102,89 @@ const int PROXIMITY_THRESHOLD = 40;
 
 // Conveyor timeout tracker at file scope
 unsigned long conveyorStartTime = 0;
+
+// ==============================================================================
+// LIVE CAMERA CALIBRATION & LUMA DIAGNOSTIC TICK ('c' / 'x')
+// ==============================================================================
+void runCalibrationTick() {
+  if (!cameraAvailable && !ei_camera_init()) {
+    Serial.println("[CAL] Error: OV7675 camera not detected.");
+    return;
+  }
+  cameraAvailable = true;
+
+  uint32_t resize_col_sz;
+  uint32_t resize_row_sz;
+  bool do_resize = false;
+  calculate_resize_dimensions(EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT, &resize_col_sz, &resize_row_sz, &do_resize);
+
+  void *snapshot_mem = ei_malloc((resize_col_sz * resize_row_sz * 2) + 8);
+  if (snapshot_mem == NULL) {
+    Serial.println("[CAL] Error: Snapshot buffer memory allocation failed.");
+    return;
+  }
+  uint8_t *snapshot_buf = (uint8_t *)DWORD_ALIGN_PTR((uintptr_t)snapshot_mem);
+
+  if (!ei_camera_capture(EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT, snapshot_buf)) {
+    Serial.println("[CAL] Error: Camera frame capture timed out or failed.");
+    ei_free(snapshot_mem);
+    return;
+  }
+
+  // Calculate Grayscale Luminance statistics across cropped 96x96 RGB565 frame
+  uint32_t totalPixels = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT;
+  uint32_t lumaSum = 0;
+  uint8_t minLuma = 255;
+  uint8_t maxLuma = 0;
+
+  for (uint32_t i = 0; i < totalPixels; i++) {
+    uint16_t pixel = (snapshot_buf[i * 2] << 8) | snapshot_buf[i * 2 + 1];
+    uint8_t r = ((pixel >> 11) & 0x1f) << 3;
+    uint8_t g = ((pixel >> 5) & 0x3f) << 2;
+    uint8_t b = (pixel & 0x1f) << 3;
+    uint8_t luma = (uint8_t)((r * 299 + g * 587 + b * 114) / 1000);
+    lumaSum += luma;
+    if (luma < minLuma) minLuma = luma;
+    if (luma > maxLuma) maxLuma = luma;
+  }
+  uint8_t avgLuma = (uint8_t)(lumaSum / totalPixels);
+
+  // Run TinyML Inference
+  ei::signal_t signal;
+  signal.total_length = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT;
+  signal.get_data = &ei_camera_cutout_get_data;
+
+  ei_impulse_result_t result = { 0 };
+  EI_IMPULSE_ERROR ei_error = run_classifier(&signal, &result, false);
+
+  float mouseProb = 0.0f;
+  float bgProb = 0.0f;
+
+  if (ei_error == EI_IMPULSE_OK) {
+    for (uint16_t i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++) {
+      if (strcmp(ei_classifier_inferencing_categories[i], "mouse") == 0) {
+        mouseProb = result.classification[i].value * 100.0f;
+      } else if (strcmp(ei_classifier_inferencing_categories[i], "background") == 0) {
+        bgProb = result.classification[i].value * 100.0f;
+      }
+    }
+  }
+
+  // Format: [CAL] Luma avg:<avg> (min:<min>, max:<max>) | mouse: <xx.x>% | background: <xx.x>%
+  Serial.print("[CAL] Luma avg:");
+  Serial.print(avgLuma);
+  Serial.print(" (min:");
+  Serial.print(minLuma);
+  Serial.print(", max:");
+  Serial.print(maxLuma);
+  Serial.print(") | mouse: ");
+  Serial.print(mouseProb, 1);
+  Serial.print("% | background: ");
+  Serial.print(bgProb, 1);
+  Serial.println("%");
+
+  ei_free(snapshot_mem);
+}
 
 // ==============================================================================
 // 3. SETUP FUNCTION
@@ -155,6 +239,8 @@ void setup() {
   Serial.println("    • Press PB1 or type 's': Start Conveyor / Trigger Scan");
   Serial.println("    • Type 'm': Instant Mouse Demo (180 deg Servo for 5s)");
   Serial.println("    • Type 'b': Instant Background Demo (Servo Idle at 0 deg)");
+  Serial.println("    • Type 'c': Enter Live Camera Calibration / Luma Diagnostic");
+  Serial.println("    • Type 'x': Exit Live Camera Calibration");
   Serial.println("==================================================");
 }
 
@@ -193,14 +279,47 @@ void loop() {
       currentState = STATE_SORTING_ACTION;
       return;
     }
+
+    // Live Camera Calibration & Luma Diagnostic Mode: 'c' enters continuous stream
+    if (c == 'c' || c == 'C') {
+      if (currentState == STATE_IDLE || currentState == STATE_CONVEYOR_RUNNING) {
+        calibrationMode = true;
+        digitalWrite(LEDG, HIGH); // Green OFF
+        digitalWrite(LEDR, LOW);  // Red ON (Inspection/Calibration active)
+        digitalWrite(LEDB, HIGH); // Blue OFF
+        Serial.println("\n[CAL] === ENTERING LIVE CAMERA CALIBRATION MODE ===");
+        Serial.println("[CAL] Streaming live Luma (0-255) + TinyML confidence every 1.2s.");
+        Serial.println("[CAL] Adjust mouse height (15-20cm), angle, and lighting until mouse >= 70%.");
+        Serial.println("[CAL] Type 'x' to exit calibration or 's' to start conveyor sorting.");
+        return;
+      }
+    }
+
+    // Exit Calibration Mode: 'x'
+    if (c == 'x' || c == 'X') {
+      if (calibrationMode) {
+        calibrationMode = false;
+        digitalWrite(LEDR, HIGH); // Red OFF
+        digitalWrite(LEDG, HIGH); // Green OFF
+        Serial.println("\n[CAL] === EXITED CAMERA CALIBRATION MODE (Back to IDLE) ===");
+        currentState = STATE_IDLE;
+        return;
+      }
+    }
     
     // 's' or space command: Start conveyor if idle, or trigger immediate snapshot if running
     if (c == 's' || c == 'S' || c == ' ') {
+      if (calibrationMode) {
+        calibrationMode = false;
+        Serial.println("\n[CAL] Exited calibration mode to run conveyor sorting.");
+      }
       if (currentState == STATE_IDLE) {
         Serial.println("\n[START] Conveyor Belt Running (Green LED ON)...");
         digitalWrite(LEDG, LOW);  // Green LED ON
         digitalWrite(LEDR, HIGH); // Red LED OFF
         conveyorStartTime = millis();
+        sortedActionTaken = false;
+        buttonTriggered = false;
         currentState = STATE_CONVEYOR_RUNNING;
         delay(100);
         return;
@@ -211,6 +330,16 @@ void loop() {
         return;
       }
     }
+  }
+
+  // If in calibration mode, run periodic frame evaluation and skip normal state transitions
+  if (calibrationMode) {
+    static unsigned long lastCalibTick = 0;
+    if (millis() - lastCalibTick >= 1200) {
+      lastCalibTick = millis();
+      runCalibrationTick();
+    }
+    return;
   }
 
   // Handle State Machine
@@ -227,8 +356,10 @@ void loop() {
         digitalWrite(LEDR, HIGH);         // Red LED OFF
         digitalWrite(LEDB, HIGH);         // Blue LED OFF
         conveyorStartTime = millis();
+        sortedActionTaken = false;        // Reset sorting action flag at cycle start
         currentState = STATE_CONVEYOR_RUNNING;
         delay(200); // Prevent multi-triggering
+        buttonTriggered = false;          // Fix mechanical button release bounce
       }
       break;
     }
@@ -452,6 +583,8 @@ void loop() {
       digitalWrite(LEDB, HIGH);         // Blue LED OFF
       
       delay(1000);
+      buttonTriggered = false;
+      sortedActionTaken = false;
       currentState = STATE_IDLE; // Reset to wait for next button / conveyor run
       break;
     }

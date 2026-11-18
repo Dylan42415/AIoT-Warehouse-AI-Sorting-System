@@ -161,7 +161,7 @@ void setup() {
     Serial.println("✅ OV7675 Camera Initialized Successfully.");
   } else {
     cameraAvailable = false;
-    Serial.println("⚠️ Notice: Camera not detected. Running fallback mode.");
+    Serial.println("❌ Error: OV7675 Camera not detected. Check ribbon cable.");
   }
 
   Serial.println("==================================================");
@@ -331,11 +331,11 @@ void loop() {
         }
       }
 
-      // Graceful fallback if camera offline
+      // If camera capture or inferencing failed
       if (!inferenceSuccess) {
-        Serial.println("[INFO] Live capture unavailable, using default mouse target.");
-        detectedProduct = "mouse";
-        confidenceScore = 96;
+        Serial.println("[ERR] Live camera capture or inferencing failed. No product detected.");
+        detectedProduct = "error";
+        confidenceScore = 0;
       }
 
       Serial.print("[RESULT] Classified Product: ");

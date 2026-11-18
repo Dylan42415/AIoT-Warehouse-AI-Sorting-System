@@ -462,10 +462,9 @@ void loop() {
         if (snapshot_mem != NULL) {
           snapshot_buf = (uint8_t *)DWORD_ALIGN_PTR((uintptr_t)snapshot_mem);
 
-          // Flush 5 dummy frames so OV7675 Auto-Exposure (AEC) and Auto-Gain (AGC) pipeline stabilize
-          for (int f = 0; f < 5; f++) {
+          // Flush 2 dummy frames so OV7675 Auto-Exposure (AEC) and Auto-Gain (AGC) pipeline stabilize at 15 fps
+          for (int f = 0; f < 2; f++) {
             ei_camera_capture(EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT, snapshot_buf);
-            delay(40);
           }
 
           // Real frame capture for neural network inference

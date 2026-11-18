@@ -15,7 +15,7 @@
 #define DWORD_ALIGN_PTR(a)   ((a & 0x3) ?(((uintptr_t)a + 0x4) & ~(uintptr_t)0x3) : a)
 
 /* Edge Impulse ------------------------------------------------------------- */
-#define CAMERA_SIGNAL_TIMEOUT 2000000UL
+#define CAMERA_SIGNAL_TIMEOUT 1000000UL
 
 class OV7675 : public OV767X {
     public:
@@ -115,8 +115,8 @@ int calculate_resize_dimensions(uint32_t out_width, uint32_t out_height, uint32_
 bool ei_camera_init(void) {
     if (is_initialised) return true;
 
-    if (!Cam.begin(QQVGA, RGB565, 1)) {
-        ei_printf("ERR: Failed to initialize camera\r\n");
+    if (!Cam.begin(QQVGA, RGB565, 15)) {
+        ei_printf("ERR: Failed to initialize camera at 15 fps\r\n");
         return false;
     }
     is_initialised = true;
@@ -381,6 +381,7 @@ int OV7675::deallocate_scratch_buffs()
 bool OV7675::readFrame(void* buffer)
 {
     if (allocate_scratch_buffs() != 0 || raw_buf == NULL) {
+        ei_printf("ERR: buf_mem alloc\r\n");
         return false;
     }
 
@@ -393,6 +394,7 @@ bool OV7675::readFrame(void* buffer)
         if (--to == 0) {
             interrupts();
             deallocate_scratch_buffs();
+            ei_printf("ERR: VSYNC timeout (wait for HIGH)\r\n");
             return false;
         }
     }
@@ -401,6 +403,7 @@ bool OV7675::readFrame(void* buffer)
         if (--to == 0) {
             interrupts();
             deallocate_scratch_buffs();
+            ei_printf("ERR: VSYNC timeout (wait for LOW)\r\n");
             return false;
         }
     }
@@ -410,6 +413,7 @@ bool OV7675::readFrame(void* buffer)
         if (!readBuf()) {
             interrupts();
             deallocate_scratch_buffs();
+            ei_printf("ERR: HREF/PCLK timeout\r\n");
             return false;
         }
 

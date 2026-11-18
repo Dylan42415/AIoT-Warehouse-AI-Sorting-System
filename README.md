@@ -15,7 +15,7 @@ This project fulfills and exceeds 100% of the **Level 4 Maximum Marks Criteria**
 
 | Requirement | Level 4 Rubric Threshold | System Implementation | Status |
 | :--- | :--- | :--- | :---: |
-| **Input Sensors** | $\ge 2$ Sensors | 1. **Push Button** (Grove Port J2: `D11` - Conveyor Belt Start)<br>2. **APDS-9960 Proximity Sensor** (Onboard I2C: `Wire1` - Object Detection Zone) | ✅ **Compliant** |
+| **Input Sensors** | $\ge 2$ Sensors | 1. **Push Button** (Carrier PB1: Pin 13 / Grove Port J2: `D11` / Serial `'s'` - Conveyor Belt Start)<br>2. **APDS-9960 Proximity Sensor** (Onboard I2C: `Wire1` - Object Detection Zone) | ✅ **Compliant** |
 | **Output Actuators** | $\ge 2$ Actuators | 1. **Conveyor Status LED** (`LED_BUILTIN`: Pin 13 - Solid ON when running, OFF when scanning)<br>2. **SG90 Servo Motor** (Grove Port J3: `D12` - 180° sorting swing for 5s hold, returns to 0°) | ✅ **Compliant** |
 | **Communication Protocols** | $\ge 2$ Protocols | 1. **Hardware UART** (Carrier Port J1: `A6 TX` / `A7 RX` @ 9600 baud)<br>2. **MQTT over WebSockets** (Port 80 to ThingSpeak Cloud Channel `3561948`) | ✅ **Compliant** |
 | **TinyML Confidence** | Prediction Probability $\ge 70\%$ | **MobileNetV1 96×96 0.25 (int8)**: **100% Training Accuracy, 96.00% Validation Accuracy** | 🌟 **Exceeded (+26%)** |

@@ -8,12 +8,12 @@
  
   Hardware Pinout Configuration (Tiny Machine Learning Carrier):
   ----------------------------------------------------------------------------
-  1. Push Button (Input Sensor 1)    -> Grove J2: Pin D11 (or Type 's' in Serial Monitor)
+  1. Push Button (Input Sensor 1)    -> Carrier PB1 (Pin 13) / Grove J2 (D11) / Type 's' in Serial Monitor
   2. Proximity Sensor (Input Sensor 2)-> Onboard APDS-9960 (I2C: Wire1)
   3. Conveyor LED (Output Actuator 1) -> Onboard RGB LEDs (Green = Moving, Red = Stop/Scan)
   4. Servo Motor (Output Actuator 2) -> Grove J3: Pin D12 (Sorts item: 180 deg for 5s)
   5. Hardware UART Serial Gateway    -> Grove J1: A6 (TX) / A7 (RX) to Raspberry Pi
-  6. Edge Impulse TinyML Vision      -> OV7675 Camera (Native 96x96 Grayscale)
+  6. Edge Impulse TinyML Vision      -> OV7675 Camera (MobileNetV1 96x96 0.25 Grayscale int8)
   7. USB Debug Monitor               -> Serial (9600 baud)
  ==============================================================================
 */

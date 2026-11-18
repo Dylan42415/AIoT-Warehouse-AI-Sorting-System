@@ -94,14 +94,23 @@ stateDiagram-v2
 
 | Evaluation Criterion | Minimum Level 1 | Target Level 4 | Our Implemented Architecture | Status |
 | :--- | :---: | :---: | :--- | :---: |
-| **Input Sensors** | 0 | **2** | 1. Push Button (Grove J2: D11)<br>2. APDS-9960 Proximity Sensor (Wire1) | ✅ **Compliant (2 Sensors)** |
-| **Output Actuators** | 0 | **2** | 1. Conveyor LED (Onboard Pin 13)<br>2. Sorting Servo Motor (Grove J3: D12) | ✅ **Compliant (2 Actuators)** |
-| **Comm Protocols** | 1 | **2** | 1. Hardware UART (A6/A7)<br>2. MQTT WebSockets (Port 80) | ✅ **Compliant (2 Protocols)** |
-| **Prediction Confidence** | $< 50\%$ | **$\ge 70\%$** | Edge Impulse MobileNet Model ($96.00\%$ validation) | ✅ **Compliant ($\ge 70\%$)** |
+| **Input Sensors** | 0 | **2** | 1. Push Button (Carrier PB1: Pin 13 / Grove J2: D11)<br>2. APDS-9960 Proximity Sensor (Wire1) | ✅ **Compliant (2 Sensors)** |
+| **Output Actuators** | 0 | **2** | 1. Conveyor LED (Onboard RGB Pin 13/Green/Red)<br>2. Sorting Servo Motor (Grove J3: D12, 180° for 5s) | ✅ **Compliant (2 Actuators)** |
+| **Comm Protocols** | 1 | **2** | 1. Hardware UART (A6 TX / A7 RX @ 9600)<br>2. MQTT over WebSockets (ThingSpeak Channel 3561948) | ✅ **Compliant (2 Protocols)** |
+| **Prediction Confidence** | $< 50\%$ | **$\ge 70\%$** | MobileNetV1 96×96 0.25 Grayscale int8 ($96.00\%$ validation) | ✅ **Compliant ($\ge 70\%$)** |
 
 ---
 
-## 5. Plug-and-Play File Locations
+## 5. Microcontroller Memory & Tensor Arena Optimization
+
+| Model Configuration | Input Dimensions | Peak Tensor Arena | nRF52840 RAM Fit (256 KB) | Status |
+| :--- | :---: | :---: | :---: | :---: |
+| **RGB MobileNetV2 (Default)** | $96 \times 96 \times 3$ | **246,720 bytes (241 KB)** | ❌ Exceeds free heap (~215 KB) | Arena Alloc Error (`-6`) |
+| **Grayscale MobileNetV1 0.25 (Production)** | $96 \times 96 \times 1$ | **~53,000 bytes (52 KB)** | ✅ Comfortably fits (>150 KB free) | **Instant live inference** |
+
+---
+
+## 6. Plug-and-Play File Locations
 
 1. **Master Arduino Sketch:**  
    [Warehouse_AI_Sorter.ino](file:///c:/Users/Dfault/Downloads/AIOT_Project/Warehouse_AI_System/Warehouse_AI_Sorter/Warehouse_AI_Sorter.ino)

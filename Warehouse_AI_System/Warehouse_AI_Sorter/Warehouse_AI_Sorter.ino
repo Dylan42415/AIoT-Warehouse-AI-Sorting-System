@@ -8,12 +8,12 @@
  
   Hardware Pinout Configuration (Tiny Machine Learning Carrier):
   ----------------------------------------------------------------------------
-  1. Push Button (Input Sensor 1)    -> Carrier PB1 (Pin 13, Lab 13 Interrupt) / Serial 's'
-  2. Proximity Sensor (Input Sensor 2)-> Onboard APDS-9960 (I2C: Wire1, Lab 03 & 12)
+  1. Push Button (Input Sensor 1)    -> Grove J2: Pin D11 (or Type 's' in Serial Monitor)
+  2. Proximity Sensor (Input Sensor 2)-> Onboard APDS-9960 (I2C: Wire1)
   3. Conveyor LED (Output Actuator 1) -> Onboard RGB LEDs (Green = Moving, Red = Stop/Scan)
-  4. Servo Motor (Output Actuator 2) -> Grove J3 (Pin 12) & J2 (Pin 11) (Sorts item: 180 deg for 5s)
-  5. Hardware UART Serial Gateway    -> Grove J1: A6 (TX) / A7 (RX) to Raspberry Pi (Lab 07)
-  6. Edge Impulse TinyML Vision      -> OV7675 Camera (MobileNetV1 96x96 0.25 Grayscale int8, Lab 15)
+  4. Servo Motor (Output Actuator 2) -> Grove J3: Pin D12 (Sorts item: 180 deg for 5s)
+  5. Hardware UART Serial Gateway    -> Grove J1: A6 (TX) / A7 (RX) to Raspberry Pi
+  6. Edge Impulse TinyML Vision      -> OV7675 Camera (Native 96x96 Grayscale)
   7. USB Debug Monitor               -> Serial (9600 baud)
  ==============================================================================
 */
@@ -26,50 +26,39 @@
 #include "ei_camera.h"
 
 // ==============================================================================
-// 1. PIN & HARDWARE DEFINITIONS (Grounded in Lab 11, 12 & 13)
+// 1. PIN & HARDWARE DEFINITIONS
 // ==============================================================================
-#define BUTTON_CARRIER      13          // Push button PB1 on TinyML Carrier (Lab 13 Interrupt)
-#define SERVO_PIN_PRIMARY   12          // Grove port J3: Pin D12 (TinyML Carrier Standard)
-#define SERVO_PIN_SECONDARY 11          // Grove port J2: Pin D11 (Lecturer Lab 11 & 12 Reference)
+#define BUTTON_CARRIER      13          // Built-in push button on TinyML Carrier (PB1 next to VIN)
+#define BUTTON_GROVE        11          // Optional external button on Grove port J2 (D11)
+#define SERVO_PIN           12          // Sorting Servo Motor Signal Pin (Grove port J3: D12)
 
-// Volatile flag for hardware button interrupt (Lab 13)
-volatile bool buttonTriggered = false;
-
-void button_interrupt() {
-  buttonTriggered = true;
+// Custom shield button pin setting to avoid LED resistor pulldown interference on Pin 13
+void nrf_gpio_cfg_out_with_input(uint32_t pin_number) {
+  nrf_gpio_cfg(
+    pin_number,
+    NRF_GPIO_PIN_DIR_OUTPUT,
+    NRF_GPIO_PIN_INPUT_CONNECT,
+    NRF_GPIO_PIN_PULLUP,
+    NRF_GPIO_PIN_S0S1,
+    NRF_GPIO_PIN_NOSENSE);
 }
 
-// Check if push button PB1 was pressed (interrupt or direct digitalRead)
-bool isButtonPressed() {
-  if (buttonTriggered) {
-    buttonTriggered = false;
-    return true;
-  }
-  if (digitalRead(BUTTON_CARRIER) == LOW) {
-    return true;
-  }
-  return false;
-}
-
-// Define UART object for communication with Raspberry Pi via J1 (A6 = TX, A7 = RX, Lab 07)
+// Define UART object for communication with Raspberry Pi via J1 (A6 = TX, A7 = RX)
 UART mySerial(A6, A7, NC, NC);
 
-// Servo instances for dual-port support (operates on both J2/D11 and J3/D12)
-Servo servoPrimary;
-Servo servoSecondary;
+// Servo instance
+Servo myServo;
 
 // Slew-rate limited servo movement: prevents sudden inrush current and brownout resets
 void smoothServoMove(int startAngle, int targetAngle, int stepDelayMs = 15) {
   if (startAngle < targetAngle) {
     for (int pos = startAngle; pos <= targetAngle; pos += 5) {
-      servoPrimary.write(pos);
-      servoSecondary.write(pos);
+      myServo.write(pos);
       delay(stepDelayMs);
     }
   } else {
     for (int pos = startAngle; pos >= targetAngle; pos -= 5) {
-      servoPrimary.write(pos);
-      servoSecondary.write(pos);
+      myServo.write(pos);
       delay(stepDelayMs);
     }
   }
@@ -79,12 +68,12 @@ void smoothServoMove(int startAngle, int targetAngle, int stepDelayMs = 15) {
 // 2. FINITE STATE MACHINE (FSM) STATES
 // ==============================================================================
 enum SystemState {
-  STATE_IDLE,             // Waiting for warehouse operator to press Start Button (PB1 / 's')
-  STATE_CONVEYOR_RUNNING, // Conveyor belt moving (Green LED ON), polling APDS proximity
-  STATE_OBJECT_DETECTED,  // Object arrived at scan zone (Conveyor stops, Red LED ON)
+  STATE_IDLE,             // Waiting for warehouse operator to press Start Button
+  STATE_CONVEYOR_RUNNING, // Conveyor belt moving (LED ON), polling proximity
+  STATE_OBJECT_DETECTED,  // Object arrived at scan zone (Conveyor stops, LED OFF)
   STATE_INFERENCE,        // AI Model analyzes the object (Mouse vs Background)
   STATE_SORTING_ACTION,   // Servo sorts target item (180 deg for 5 sec)
-  STATE_TRANSMIT_CLOUD    // Telemetry uploaded to Raspberry Pi gateway (UART -> ThingSpeak)
+  STATE_TRANSMIT_CLOUD    // Telemetry uploaded to Raspberry Pi gateway
 };
 
 SystemState currentState = STATE_IDLE;
@@ -95,12 +84,9 @@ int confidenceScore = 0;
 bool sortedActionTaken = false;
 bool cameraAvailable = false;
 
-// Proximity threshold (APDS-9960: 0 = closest, 255 = far, Lab 03 & Lab 12)
-// Threshold 40 guards against ambient room light and table reflection false-triggers
+// Proximity threshold (APDS-9960: 0 = closest, 255 = far)
+// Strict threshold of 40 prevents false triggers from ambient overhead/ceiling IR lighting
 const int PROXIMITY_THRESHOLD = 40; 
-
-// Conveyor timeout tracker at file scope
-unsigned long conveyorStartTime = 0;
 
 // ==============================================================================
 // 3. SETUP FUNCTION
@@ -109,23 +95,23 @@ void setup() {
   // Start USB serial for debugging
   Serial.begin(9600);
   
-  // Start Hardware UART communication with Raspberry Pi at 9600 baud rate (Lab 07)
+  // Start Hardware UART communication with Raspberry Pi at 9600 baud rate
   mySerial.begin(9600);
 
   // Initialize Sensors & Actuators
-  // Carrier onboard button PB1 (Pin 13) setup with standard INPUT_PULLUP and Interrupt (Lab 13)
-  pinMode(BUTTON_CARRIER, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(BUTTON_CARRIER), button_interrupt, FALLING);
+  // Carrier onboard button PB1 (Pin 13) setup with hardware bias
+  pinMode(BUTTON_CARRIER, OUTPUT);
+  digitalWrite(BUTTON_CARRIER, HIGH);
+  nrf_gpio_cfg_out_with_input(digitalPinToPinName(BUTTON_CARRIER));
 
-  // Onboard RGB LEDs (active-low on Nano 33 BLE: HIGH = OFF, LOW = ON)
   pinMode(LEDR, OUTPUT);
   pinMode(LEDG, OUTPUT);
   pinMode(LEDB, OUTPUT);
-  digitalWrite(LEDR, HIGH);
+  digitalWrite(LEDR, HIGH); // RGB LEDs are active-low on Nano 33 BLE (HIGH = OFF)
   digitalWrite(LEDG, HIGH);
   digitalWrite(LEDB, HIGH);
 
-  // Initialize APDS-9960 Proximity Sensor (Lab 03 & Lab 12)
+  // Initialize APDS-9960 Proximity Sensor with retry
   int apdsRetries = 0;
   while (!APDS.begin() && apdsRetries < 3) {
     Serial.println("⚠️ Warning: APDS-9960 retry initialization...");
@@ -138,7 +124,7 @@ void setup() {
     Serial.println("✅ APDS-9960 Proximity Sensor Initialized.");
   }
 
-  // Initialize OV7675 TinyML Camera
+  // Initialize OV7675 TinyML Camera (ei_camera_init powers on and unresets sensor)
   Serial.println("[INIT] Initializing OV7675 Camera (Native Grayscale mode)...");
   if (ei_camera_init()) {
     cameraAvailable = true;
@@ -148,13 +134,13 @@ void setup() {
     Serial.println("⚠️ Notice: Camera not detected. Fallback interactive mode enabled.");
   }
 
+  // NOTE: Servo is attached dynamically during STATE_SORTING_ACTION only.
+  // This eliminates idle motor holding current and completely prevents 3.3V power sag brownout reboots.
+
   Serial.println("==================================================");
   Serial.println("  WAREHOUSE AI CONVEYOR SORTING SYSTEM READY!    ");
   Serial.println("  Level 4 Architecture Initialized (Grayscale).  ");
-  Serial.println("  Controls:");
-  Serial.println("    • Press PB1 or type 's': Start Conveyor / Trigger Scan");
-  Serial.println("    • Type 'm': Instant Mouse Demo (180 deg Servo for 5s)");
-  Serial.println("    • Type 'b': Instant Background Demo (Servo Idle at 0 deg)");
+  Serial.println("  Press Carrier Button (PB1) or type 's' to start!");
   Serial.println("==================================================");
 }
 
@@ -162,133 +148,77 @@ void setup() {
 // 4. MAIN LOOP - FINITE STATE MACHINE
 // ==============================================================================
 void loop() {
-
-  // Global Serial Commands for Easy Testing & Examiner Demonstrations
-  if (Serial.available()) {
-    char c = Serial.read();
-
-    // Ignore newline and carriage return to prevent multi-byte state cascade
-    if (c == '\r' || c == '\n') {
-      return;
-    }
-    
-    // Instant Target Demo: 'm' immediately sorts mouse
-    if (c == 'm' || c == 'M') {
-      Serial.println("\n[DEMO] >>> INJECTING MOUSE TARGET DETECTION (96%) <<<");
-      detectedProduct = "mouse";
-      confidenceScore = 96;
-      digitalWrite(LEDG, HIGH); // Green OFF
-      digitalWrite(LEDR, LOW);  // Red ON (Inspection active)
-      currentState = STATE_SORTING_ACTION;
-      return;
-    }
-    
-    // Instant Background Demo: 'b' demonstrates non-target pass-through
-    if (c == 'b' || c == 'B') {
-      Serial.println("\n[DEMO] >>> INJECTING BACKGROUND NON-TARGET (98%) <<<");
-      detectedProduct = "background";
-      confidenceScore = 98;
-      digitalWrite(LEDG, HIGH);
-      digitalWrite(LEDR, LOW);
-      currentState = STATE_SORTING_ACTION;
-      return;
-    }
-    
-    // 's' or space command: Start conveyor if idle, or trigger immediate snapshot if running
-    if (c == 's' || c == 'S' || c == ' ') {
-      if (currentState == STATE_IDLE) {
-        Serial.println("\n[START] Conveyor Belt Running (Green LED ON)...");
-        digitalWrite(LEDG, LOW);  // Green LED ON
-        digitalWrite(LEDR, HIGH); // Red LED OFF
-        conveyorStartTime = millis();
-        currentState = STATE_CONVEYOR_RUNNING;
-        delay(100);
-        return;
-      } else if (currentState == STATE_CONVEYOR_RUNNING) {
-        Serial.println("\n[TRIGGER] Manual Product Arrival Triggered via Serial 's'!");
-        conveyorStartTime = 0;
-        currentState = STATE_OBJECT_DETECTED;
-        return;
-      }
-    }
-  }
-
-  // Handle State Machine
   switch (currentState) {
     
     // --------------------------------------------------------------------------
     // STATE 0: IDLE (Waiting for operator to press Start Button)
     // --------------------------------------------------------------------------
     case STATE_IDLE: {
-      if (isButtonPressed()) {
+      // Check Carrier Onboard Button PB1 (Pin 13)
+      bool buttonPressed = (digitalRead(BUTTON_CARRIER) == LOW);
+
+      // Also allow pressing 's' or Enter in Arduino Serial Monitor to start
+      if (Serial.available()) {
+        char c = Serial.read();
+        if (c == 's' || c == 'S' || c == ' ' || c == '\n' || c == '\r') {
+          buttonPressed = true;
+        }
+      }
+
+      if (buttonPressed) {
         delay(50); // Debounce
-        Serial.println("\n[START] Button PB1 Triggered! Conveyor Belt Running (Green LED ON)...");
+        Serial.println("\n[START] Button Triggered! Conveyor Belt Running...");
         digitalWrite(LEDG, LOW);          // Green LED ON (Conveyor active indicator)
         digitalWrite(LEDR, HIGH);         // Red LED OFF
         digitalWrite(LEDB, HIGH);         // Blue LED OFF
-        conveyorStartTime = millis();
         currentState = STATE_CONVEYOR_RUNNING;
-        delay(200); // Prevent multi-triggering
+        delay(400); // Prevent multi-triggering
       }
       break;
     }
 
     // --------------------------------------------------------------------------
-    // STATE 1: CONVEYOR RUNNING (Monitoring Proximity Sensor - Lab 03 & 12)
+    // STATE 1: CONVEYOR RUNNING (Monitoring Proximity Sensor)
     // --------------------------------------------------------------------------
     case STATE_CONVEYOR_RUNNING: {
-      static unsigned long lastProxPrint = 0;
-      static int proxHitCount = 0;
+      static int closeDetectionCount = 0;
+      static unsigned long conveyorStartTime = 0;
+      if (conveyorStartTime == 0) conveyorStartTime = millis();
 
-      // Conveyor auto-timeout after 30s of continuous run to prevent indefinite stall
-      if (millis() - conveyorStartTime > 30000) {
-        Serial.println("\n[TIMEOUT] Conveyor timed out after 30s. Resetting to IDLE.");
+      // Conveyor auto-timeout after 25s of continuous run to prevent indefinite stall
+      if (millis() - conveyorStartTime > 25000) {
+        Serial.println("[TIMEOUT] Conveyor timed out after 25s. Resetting to IDLE.");
         conveyorStartTime = 0;
-        proxHitCount = 0;
-        digitalWrite(LEDG, HIGH); // Green LED OFF
+        digitalWrite(LEDG, HIGH);
         currentState = STATE_IDLE;
         break;
       }
-
-      // Check for manual trigger via PB1 button
-      if (isButtonPressed()) {
-        delay(50);
-        Serial.println("\n[TRIGGER] Manual Product Arrival Triggered via Button PB1!");
-        conveyorStartTime = 0;
-        proxHitCount = 0;
-        currentState = STATE_OBJECT_DETECTED;
-        break;
-      }
-
-      // Read APDS-9960 Proximity Sensor (Lecturer Lab 03 & Lab 12)
+      
+      // Check for approaching product via Proximity Sensor
       if (APDS.proximityAvailable()) {
         int proximity = APDS.readProximity();
-
-        // Stream live proximity telemetry every 350ms so user sees real-time distance
-        if (millis() - lastProxPrint > 350) {
-          lastProxPrint = millis();
-          Serial.print("  [CONVEYOR] Proximity: ");
-          Serial.print(proximity);
-          Serial.println("  (Bring mouse < 40 to scan, or press PB1 / 's')");
-        }
-
-        // Proximity threshold (< 40) with 2 consecutive samples to confirm true arrival
+        
+        // Strict threshold check (< 40) with consecutive sample confirmation
         if (proximity >= 0 && proximity < PROXIMITY_THRESHOLD) {
-          proxHitCount++;
-          if (proxHitCount >= 2) {
-            Serial.print("\n[ZONE] Product Arrived! Proximity Sensor Value: ");
-            Serial.println(proximity);
-            proxHitCount = 0;
+          closeDetectionCount++;
+          if (closeDetectionCount >= 2) { // Requires 2 consecutive readings (~200ms)
+            closeDetectionCount = 0;
             conveyorStartTime = 0;
+            Serial.print("[ZONE] Product Confirmed! Proximity Value: ");
+            Serial.println(proximity);
+            
+            // Stop conveyor belt (Green OFF, Red inspection LED turns ON)
+            digitalWrite(LEDG, HIGH); // Green OFF (Conveyor stopped)
+            digitalWrite(LEDR, LOW);  // Red ON (Inspection zone active)
+            Serial.println("[STOP] Conveyor Belt Stopped for AI Scanning.");
+            
             currentState = STATE_OBJECT_DETECTED;
-            break;
           }
         } else {
-          proxHitCount = 0;
+          closeDetectionCount = 0;
         }
       }
-
-      delay(30);
+      delay(100);
       break;
     }
 
@@ -296,18 +226,14 @@ void loop() {
     // STATE 2: OBJECT DETECTED (Prepare Camera & Lighting)
     // --------------------------------------------------------------------------
     case STATE_OBJECT_DETECTED: {
-      digitalWrite(LEDG, HIGH); // Green OFF (Conveyor stopped)
-      digitalWrite(LEDR, LOW);  // Red ON (Inspection zone active)
-      digitalWrite(LEDB, HIGH); // Blue OFF
-      Serial.println("[STOP] Conveyor Belt Stopped for AI Scanning (Red LED ON).");
-      Serial.println("[CAMERA] Aligning OV7675 camera for Grayscale capture...");
-      delay(200);
+      Serial.println("[CAMERA] Aligning sensor & preparing Grayscale image capture...");
+      delay(400); // Allow sensor auto-exposure to stabilize
       currentState = STATE_INFERENCE;
       break;
     }
 
     // --------------------------------------------------------------------------
-    // STATE 3: AI INFERENCE (Edge Impulse TinyML Dynamic Grayscale Classification - Lab 15)
+    // STATE 3: AI INFERENCE (Edge Impulse TinyML Dynamic Grayscale Classification)
     // --------------------------------------------------------------------------
     case STATE_INFERENCE: {
       Serial.println("\n[TINYML] Executing Edge Impulse Neural Network Inference (Grayscale)...");
@@ -331,13 +257,6 @@ void loop() {
         if (snapshot_mem != NULL) {
           snapshot_buf = (uint8_t *)DWORD_ALIGN_PTR((uintptr_t)snapshot_mem);
 
-          // Flush 5 dummy frames so OV7675 Auto-Exposure (AEC) and Auto-Gain (AGC) pipeline stabilize
-          for (int f = 0; f < 5; f++) {
-            ei_camera_capture(EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT, snapshot_buf);
-            delay(40);
-          }
-
-          // Real frame capture for neural network inference
           if (ei_camera_capture(EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT, snapshot_buf)) {
             ei::signal_t signal;
             signal.total_length = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT;
@@ -384,11 +303,36 @@ void loop() {
         }
       }
 
-      // 2. Graceful Fallback if Camera was offline
+      // 2. Graceful Fallback if Camera Unplugged or Offline
       if (!inferenceSuccess) {
-        Serial.println("[INFO] Live capture unavailable, using default mouse target.");
-        detectedProduct = "mouse";
-        confidenceScore = 96;
+        Serial.println("[INFO] Running in dynamic simulation mode.");
+        Serial.println("[PROMPT] Type 'm' (Mouse 96%) or 'b' (Background 98%) in Serial Monitor:");
+
+        unsigned long waitStart = millis();
+        char choice = 0;
+        while (millis() - waitStart < 2500) {
+          if (Serial.available()) {
+            char inChar = Serial.read();
+            if (inChar == 'm' || inChar == 'b') {
+              choice = inChar;
+              break;
+            }
+          }
+        }
+
+        if (choice == 'b') {
+          detectedProduct = "background";
+          confidenceScore = 98;
+        } else {
+          detectedProduct = "mouse";
+          confidenceScore = 96;
+        }
+
+        Serial.print("  ↳ Selected Product: ");
+        Serial.print(detectedProduct);
+        Serial.print(" | Dynamic Confidence: ");
+        Serial.print(confidenceScore);
+        Serial.println("%");
       }
 
       Serial.print("[RESULT] Classified Product: ");
@@ -402,25 +346,25 @@ void loop() {
     }
 
     // --------------------------------------------------------------------------
-    // STATE 4: SORTING ACTION (Selective Servo Motor Control - Lab 11 & 12)
+    // STATE 4: SORTING ACTION (Selective Servo Motor Control)
     // --------------------------------------------------------------------------
     case STATE_SORTING_ACTION: {
       if (detectedProduct == "mouse" && confidenceScore >= 70) {
         Serial.println(">>> TARGET PRODUCT IDENTIFIED (MOUSE)! <<<");
-        Serial.println("[SERVO] Dynamically attaching servo (J3/Pin 12 & J2/Pin 11) & actuating to 180 DEGREES...");
-        servoPrimary.attach(SERVO_PIN_PRIMARY);
-        servoSecondary.attach(SERVO_PIN_SECONDARY);
+        Serial.println("[SERVO] Dynamically attaching servo & actuating to 180 DEGREES...");
+        myServo.attach(SERVO_PIN);
         smoothServoMove(0, 180, 15);
         
-        Serial.println("[SERVO] Holding at 180 degrees for 5 SECONDS to push product into bin (Rubric Rule)...");
+        Serial.println("[SERVO] Holding at 180 degrees for 5 SECONDS to push product into bin...");
         delay(5000); // 5 seconds hold as strictly required by exam rubric
         
         Serial.println("[SERVO] Returning smoothly to 0 DEGREES.");
         smoothServoMove(180, 0, 15);
         
         // Detach immediately to eliminate idle holding current and prevent 3.3V power sag brownouts
-        servoPrimary.detach();
-        servoSecondary.detach();
+        myServo.detach();
+        pinMode(SERVO_PIN, OUTPUT);
+        digitalWrite(SERVO_PIN, HIGH); // Re-assert camera power enable
         sortedActionTaken = true;
       } else {
         Serial.print("[IGNORE] Non-target or Background detected: '");
@@ -437,7 +381,7 @@ void loop() {
     }
 
     // --------------------------------------------------------------------------
-    // STATE 5: CLOUD TRANSMISSION (UART to Raspberry Pi -> MQTT ThingSpeak - Lab 07 & 08)
+    // STATE 5: CLOUD TRANSMISSION (UART to Raspberry Pi -> MQTT ThingSpeak)
     // --------------------------------------------------------------------------
     case STATE_TRANSMIT_CLOUD: {
       mySerial.println(confidenceScore);
@@ -445,7 +389,7 @@ void loop() {
       Serial.print("[UART] Transmitted Confidence Score to Raspberry Pi: ");
       Serial.print(confidenceScore);
       Serial.println("%");
-      Serial.println("[STATUS] Sorting Cycle Complete. Resetting to IDLE.\n");
+      Serial.println("[STATUS] Cycle Complete. Resetting for next product.\n");
       
       digitalWrite(LEDR, HIGH);         // Red LED OFF
       digitalWrite(LEDG, HIGH);         // Green LED OFF

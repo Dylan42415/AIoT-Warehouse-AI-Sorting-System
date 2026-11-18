@@ -19,7 +19,7 @@ The Integrated Product Sorting System automates warehouse package handling by si
   Arduino Nano 33 BLE Sense + Carrier          Raspberry Pi 4 Model B             ThingSpeak Platform
   
   SENSORS (Inputs):                           - Linux OS Runtime                  - 8-Field Telemetry Channel
-  1. Push Button (D11 / Grove J2)             - USB Serial /dev/ttyUSB0           - Channel ID: 3561948
+  1. Push Button (PB1: Pin 13 / Grove J2: D11)  - USB Serial Auto-Detect (/dev/tty* or COM*) - Channel ID: 3581016
      -> Starts Conveyor (avoids D2 camera bus)  - Python MQTT Gateway Script        - MQTT: mqtt3.thingspeak.com
   2. APDS-9960 Proximity Sensor (I2C)            * warehouse_iot_gateway.py        - Visual Time-Series Dashboard
      -> Detects arrival in scan zone          - Protocol Translation
@@ -96,7 +96,7 @@ stateDiagram-v2
 | :--- | :---: | :---: | :--- | :---: |
 | **Input Sensors** | 0 | **2** | 1. Push Button (Carrier PB1: Pin 13 / Grove J2: D11)<br>2. APDS-9960 Proximity Sensor (Wire1) | ✅ **Compliant (2 Sensors)** |
 | **Output Actuators** | 0 | **2** | 1. Conveyor LED (Onboard RGB Pin 13/Green/Red)<br>2. Sorting Servo Motor (Grove J3: D12, 180° for 5s) | ✅ **Compliant (2 Actuators)** |
-| **Comm Protocols** | 1 | **2** | 1. Hardware UART (A6 TX / A7 RX @ 9600)<br>2. MQTT over WebSockets (ThingSpeak Channel 3561948) | ✅ **Compliant (2 Protocols)** |
+| **Comm Protocols** | 1 | **2** | 1. Hardware UART (A6 TX / A7 RX @ 9600)<br>2. MQTT over WebSockets (ThingSpeak Channel 3581016) | ✅ **Compliant (2 Protocols)** |
 | **Prediction Confidence** | $< 50\%$ | **$\ge 70\%$** | MobileNetV1 96×96 0.25 Grayscale int8 ($96.00\%$ validation) | ✅ **Compliant ($\ge 70\%$)** |
 
 ---

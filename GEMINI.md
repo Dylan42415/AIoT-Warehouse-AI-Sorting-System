@@ -99,7 +99,7 @@ When assisting the user with hardware hookup:
 ### 2. Raspberry Pi IoT Gateway (`Warehouse_AI_System/warehouse_iot_gateway.py`)
 * **Serial Link:** Dynamic auto-port detection (`/dev/ttyUSB0`, `/dev/ttyUSB1`, `/dev/ttyACM0`) @ 9600 baud.
 * **Cloud Broker:** ThingSpeak via MQTT over WebSockets (Port 80)
-* **Channel ID:** `3561948` | **Client ID/User:** `FCwmDyoGDTwwDDIABy0DASQ`
+* **Channel ID:** `3581016` | **Client ID/User:** `MB0iNjAUGR8CKAQkDykpNgA`
 * **Buffer Safety:** Non-blocking rate-limiting + `ser.reset_input_buffer()` after publish to prevent stale telemetry.
 
 ### 3. Edge Impulse TinyML Model

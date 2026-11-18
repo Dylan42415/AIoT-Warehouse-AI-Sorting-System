@@ -26,6 +26,7 @@ import queue
 import re
 import serial
 from serial import SerialException
+import serial.tools.list_ports
 
 try:
     import paho.mqtt.publish as publish
@@ -63,12 +64,24 @@ shutdown_event  = threading.Event()
 # ==============================================================================
 # 2. SERIAL PORT CONNECTION & AUTO-RECONNECT MANAGER
 # ==============================================================================
+def get_candidate_ports():
+    """
+    Dynamically discovers serial ports across Windows (COM ports) and Linux (/dev/tty*).
+    """
+    discovered = [p.device for p in serial.tools.list_ports.comports()]
+    default_linux = ['/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyACM0', '/dev/serial0']
+    for p in default_linux:
+        if p not in discovered:
+            discovered.append(p)
+    return discovered
+
 def connect_serial():
     """
     Scans candidate ports and opens a valid serial connection.
     Clears the RX buffer once on connection to discard startup noise.
     """
-    for port in CANDIDATE_PORTS:
+    candidate_list = get_candidate_ports()
+    for port in candidate_list:
         try:
             ser = serial.Serial(port, BAUD_RATE, timeout=TIMEOUT_SEC)
             ser.reset_input_buffer()  # Flush old bootloader/startup garbage
